@@ -32,6 +32,7 @@ from core import (
     clean_letters,
     columnar_transposition_encrypt,
     heuristic_classify,
+    hill_climb_substitution,
     rail_fence_encrypt,
     shannon_entropy,
     substitution_encrypt,
@@ -178,6 +179,60 @@ EXAMPLES = [
     ["EOACT IPTRH IIEEN HSGES SOSCR REMEN AERTC OEFNT TYIHE THCMC"],
     ["THE LIBRARY PRESERVES KNOWLEDGE FOR THE COMMUNITY"],
 ]
+
+
+def random_example() -> str:
+    """Pick a random ciphertext example for the Detect tab."""
+    return random.choice(EXAMPLES)[0]
+
+
+def solve_substitution(ciphertext: str, iterations: int, restarts: int) -> Tuple[str, str]:
+    """Hill-climbing solver for monoalphabetic substitution. Educational only."""
+    letters = clean_letters(ciphertext)
+    if len(letters) < 30:
+        return (
+            "_Need at least ~30 letters of ciphertext for the climber to find a useful gradient._",
+            "",
+        )
+    plaintext, key, score = hill_climb_substitution(
+        ciphertext, iterations=int(iterations), restarts=int(restarts)
+    )
+    rletters = clean_letters(plaintext)
+    chi = chi_squared_for_english(rletters)
+    ws = word_score(plaintext)
+
+    quality = ""
+    if ws >= 3 and chi < 200:
+        quality = "✅ **Looks like English.** Multiple word matches and reasonable letter frequencies."
+    elif ws >= 1:
+        quality = "🟡 **Partial match.** A few English words — try more iterations or another restart."
+    else:
+        quality = "❌ **Did not converge.** The sample may be too short, not English, or genuinely a different cipher family."
+
+    key_table = "| Cipher | A | B | C | D | E | F | G | H | I | J | K | L | M | N | O | P | Q | R | S | T | U | V | W | X | Y | Z |\n"
+    key_table += "|---|" + "|".join([f" {c} " for c in ALPHABET_LIST]) + "|\n"
+    key_table += "| Plain |" + "|".join([f" **{c}** " for c in key]) + "|"
+
+    output = (
+        f"### Hill-climbing result\n"
+        f"```\n{plaintext}\n```\n\n"
+        f"{quality}\n\n"
+        f"- Mean bigram log-prob: **{score:.3f}** (English ≈ −2.5 to −3.5)\n"
+        f"- Word matches: **{ws}**\n"
+        f"- Chi-squared vs English: **{chi:.1f}**\n\n"
+        f"### Recovered key\n{key_table}\n"
+    )
+    note = (
+        "_Hill climbing on English bigram log-probabilities, seeded from observed "
+        "letter-frequency rank. Educational only: real cryptanalytic substitution "
+        "solvers use richer n-gram models and smarter search. This converges on "
+        "monoalphabetic substitutions of ≳120 letters of English; it will not solve "
+        "polyalphabetic, transposition, or non-English ciphers — by design._"
+    )
+    return output, note
+
+
+ALPHABET_LIST = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
 
 def transformer_predict(text: str) -> ModelPrediction | None:
@@ -457,13 +512,19 @@ with gr.Blocks(css=BRAND_CSS, title="Cipher Detective AI") as demo:
                     label="Paste ciphertext",
                     lines=8,
                     placeholder="Example: WKLV LV D FDHVDU FLSKHU...",
-                    aria_label="Ciphertext input — paste your encoded text here",
+                    info="Paste any classical ciphertext. Spaces and punctuation are tolerated.",
                 )
-                analyze_btn = gr.Button(
-                    "Analyze like a detective",
-                    variant="primary",
-                    elem_id="analyze-btn",
-                )
+                with gr.Row():
+                    analyze_btn = gr.Button(
+                        "🕵️ Analyze like a detective",
+                        variant="primary",
+                        elem_id="analyze-btn",
+                    )
+                    random_btn = gr.Button(
+                        "🎲 Load a random example",
+                        variant="secondary",
+                        elem_id="random-btn",
+                    )
                 gr.Examples(
                     examples=EXAMPLES,
                     inputs=[ciphertext],
@@ -475,13 +536,13 @@ with gr.Blocks(css=BRAND_CSS, title="Cipher Detective AI") as demo:
         # Accept Enter key from the textbox and the click button.
         ciphertext.submit(detective_mode, inputs=[ciphertext], outputs=[report, scores])
         analyze_btn.click(detective_mode, inputs=[ciphertext], outputs=[report, scores])
+        random_btn.click(random_example, inputs=None, outputs=[ciphertext])
 
     with gr.Tab("Explain Mode"):
         explain_input = gr.Textbox(
             label="Ciphertext",
             lines=7,
             placeholder="Paste any ciphertext to examine the evidence...",
-            aria_label="Ciphertext to analyze for cryptanalytic evidence",
         )
         explain_btn = gr.Button("Show evidence notebook", elem_id="explain-btn")
         explain_out = gr.Markdown(label="Evidence notebook", show_label=True)
@@ -498,26 +559,22 @@ with gr.Blocks(css=BRAND_CSS, title="Cipher Detective AI") as demo:
                 ["random", "caesar_rot", "atbash", "vigenere", "rail_fence", "columnar", "affine", "substitution"],
                 value="random",
                 label="Challenge type",
-                aria_label="Select cipher type to challenge",
             )
             difficulty = gr.Dropdown(
                 ["easy", "medium", "hard"],
                 value="medium",
                 label="Difficulty",
-                aria_label="Select difficulty level",
             )
         challenge_btn = gr.Button("Generate challenge", variant="primary", elem_id="challenge-btn")
         challenge_text = gr.Textbox(
             label="Ciphertext challenge",
             lines=5,
             interactive=False,
-            aria_label="Generated ciphertext challenge — try to identify the cipher",
         )
         answer = gr.Textbox(
             label="Reveal answer",
             lines=3,
             interactive=False,
-            aria_label="Answer revealed after you have attempted the challenge",
         )
         challenge_btn.click(make_challenge, inputs=[cipher_choice, difficulty], outputs=[challenge_text, answer])
 
@@ -533,23 +590,18 @@ with gr.Blocks(css=BRAND_CSS, title="Cipher Detective AI") as demo:
                     label="Ciphertext",
                     lines=7,
                     placeholder="Paste ciphertext to attempt decoding...",
-                    aria_label="Ciphertext to attempt manual decoding",
                 )
             with gr.Column(scale=1):
                 decode_method = gr.Dropdown(
                     DECODE_METHODS,
                     value="auto-best-caesar",
                     label="Decryption method",
-                    aria_label="Select decryption method to apply",
                 )
                 decode_key = gr.Textbox(
                     label="Key (where required)",
                     placeholder="Caesar: shift 0–25 or letter | Vigenère: word | Affine: a b",
                     lines=1,
-                    aria_label=(
-                        "Key for decryption: a number for Caesar, a word for Vigenère, "
-                        "two numbers (a b) for Affine; leave blank for auto or Atbash"
-                    ),
+                    info="Number for Caesar, word for Vigenère, two ints (a b) for Affine. Leave blank for auto / Atbash.",
                 )
                 decode_btn = gr.Button("Decode", variant="primary", elem_id="decode-btn")
         decode_out = gr.Markdown(label="Decoded result + quality check", show_label=True)
@@ -566,7 +618,6 @@ with gr.Blocks(css=BRAND_CSS, title="Cipher Detective AI") as demo:
             label="Ciphertext",
             lines=7,
             placeholder="Paste ciphertext to compare methods...",
-            aria_label="Ciphertext to compare heuristic and transformer predictions",
         )
         compare_btn = gr.Button("Compare methods", variant="primary", elem_id="compare-btn")
         with gr.Row():
@@ -575,6 +626,44 @@ with gr.Blocks(css=BRAND_CSS, title="Cipher Detective AI") as demo:
         agreement_out = gr.Markdown(label="Agreement summary", show_label=True)
         compare_input.submit(compare_modes, inputs=[compare_input], outputs=[heur_out, ml_out, agreement_out])
         compare_btn.click(compare_modes, inputs=[compare_input], outputs=[heur_out, ml_out, agreement_out])
+
+    with gr.Tab("Solve Substitution"):
+        gr.Markdown(
+            "Hill-climb a monoalphabetic substitution cipher using English bigram "
+            "log-probabilities. Best on **120+ letters** of English text. Short or "
+            "non-English ciphertexts are *meant* to fail — that failure mode is part "
+            "of the lesson on why classical ciphers can be broken at all."
+        )
+        with gr.Row():
+            with gr.Column(scale=2):
+                solve_input = gr.Textbox(
+                    label="Substitution ciphertext",
+                    lines=8,
+                    placeholder="Paste a monoalphabetic substitution ciphertext (≥120 letters works best)...",
+                )
+            with gr.Column(scale=1):
+                iters = gr.Slider(
+                    minimum=500, maximum=10000, value=4000, step=500,
+                    label="Iterations per restart",
+                    info="Swaps attempted before giving up on a restart.",
+                )
+                restarts = gr.Slider(
+                    minimum=1, maximum=8, value=3, step=1,
+                    label="Random restarts",
+                    info="Higher = more chances to escape local optima, slower.",
+                )
+                solve_btn = gr.Button(
+                    "🧗 Hill-climb solve",
+                    variant="primary",
+                    elem_id="solve-btn",
+                )
+        solve_out = gr.Markdown(label="Recovered plaintext + key", show_label=True)
+        solve_note = gr.Markdown(label="Method note", show_label=True)
+        solve_btn.click(
+            solve_substitution,
+            inputs=[solve_input, iters, restarts],
+            outputs=[solve_out, solve_note],
+        )
 
     with gr.Tab("About / Model Status"):
         gr.Markdown(

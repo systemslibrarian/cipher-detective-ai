@@ -38,23 +38,22 @@ It is built as a Hugging Face-native triple:
 
 ## ✨ Demo
 
-| Detect Mode | Explain Mode | Compare Mode |
-|---|---|---|
-| ![Detect](screenshots/detect-mode.png) | ![Explain](screenshots/explain-mode.png) | ![Compare](screenshots/compare-mode.png) |
-
-> Drop your screenshots into [`screenshots/`](screenshots/) — the README references `detect-mode.png`, `explain-mode.png`, `compare-mode.png`, and `challenge-mode.png`.
+> Open the live Space to try it: <https://huggingface.co/spaces/systemslibrarian/cipher-detective-ai>
+> Static screenshots live in [`screenshots/`](screenshots/) once captured (the
+> README intentionally avoids broken `<img>` tags before they exist).
 
 ---
 
 ## 🧭 Modes
 
-The Gradio Space ships with **five** modes:
+The Gradio Space ships with **six** modes:
 
-1. **Detect Mode** — paste ciphertext, get a classification, confidence, and a full evidence report (frequency, IoC, entropy, Caesar/Affine candidates, Kasiski/Friedman indicators, transposition signal).
+1. **Detect Mode** — paste ciphertext, get a classification, confidence, and a full evidence report (frequency, IoC, entropy, Caesar/Affine candidates, Kasiski/Friedman indicators, transposition signal). One-click random examples.
 2. **Explain Mode** — see the raw "evidence notebook" without a verdict — useful for teaching.
 3. **Challenge Mode** — generate practice ciphertexts (Caesar, Atbash, Vigenère, Rail-Fence, Columnar, Affine, Substitution) at chosen difficulty.
-4. **Compare Mode** — run the **transparent heuristic baseline** and the **Transformer classifier** side-by-side, with disagreement analysis.
-5. **About / Model Status** — live status of the loaded model, dataset/model repo references, and the educational-boundary statement.
+4. **Try Decode** — apply a specific reversal with a guessed key, plus auto-brute-force for Caesar and Affine, with an automatic English-quality check.
+5. **Compare Mode** — run the **transparent heuristic baseline** and the **Transformer classifier** side-by-side, with disagreement analysis.
+6. **Solve Substitution** — hill-climbing solver for monoalphabetic substitution using English bigram log-probabilities. Educational only — converges on ~120+ letters of English; short or non-English samples fail by design.
 
 ---
 
@@ -167,8 +166,8 @@ Report includes accuracy, macro F1, per-class precision/recall/F1, confusion mat
 - [ ] Publish `classical-cipher-corpus` dataset (50k rows).
 - [ ] Train and publish `cipher-detective-classifier`.
 - [ ] Add `screenshots/` images.
-- [ ] Add hill-climbing solver demo for monoalphabetic substitution (educational only).
-- [ ] Per-length and per-difficulty evaluation buckets.
+- [x] Hill-climbing solver demo for monoalphabetic substitution (educational only).
+- [x] Per-length and per-difficulty evaluation buckets.
 - [ ] Calibration plot (heuristic confidence vs accuracy).
 - [ ] Multilingual plaintext sources (clearly labeled).
 - [ ] Linked exhibit pages from Cipher Museum / Crypto Lab.

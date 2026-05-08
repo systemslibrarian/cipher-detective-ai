@@ -325,6 +325,124 @@ def transposition_signal(letters: str) -> Tuple[float, float]:
     return round(transposition, 4), round(bigram_support, 4)
 
 
+# ---------------------------------------------------------------------------
+# Hill-climbing solver for monoalphabetic substitution
+# ---------------------------------------------------------------------------
+
+# Approximate English bigram log-probabilities. These are coarse — drawn from a
+# small training corpus — but enough to give a hill-climbing solver a useful
+# gradient. Unseen bigrams fall back to summed unigram log-probs (a standard
+# backoff trick) so the gradient stays smooth instead of plateauing on a floor.
+_BIGRAM_LOG_PROB: Dict[str, float] = {
+    "TH": -2.31, "HE": -2.43, "IN": -2.78, "ER": -2.90, "AN": -3.00, "RE": -3.05,
+    "ON": -3.18, "AT": -3.25, "EN": -3.27, "ND": -3.30, "TI": -3.40, "ES": -3.45,
+    "OR": -3.48, "TE": -3.55, "OF": -3.60, "ED": -3.65, "IS": -3.70, "IT": -3.72,
+    "AL": -3.75, "AR": -3.78, "ST": -3.80, "TO": -3.82, "NT": -3.85, "NG": -3.90,
+    "SE": -3.95, "HA": -3.98, "AS": -4.00, "OU": -4.05, "IO": -4.08, "LE": -4.10,
+    "VE": -4.15, "CO": -4.18, "ME": -4.20, "DE": -4.25, "HI": -4.28, "RI": -4.30,
+    "RO": -4.32, "IC": -4.35, "NE": -4.38, "EA": -4.40, "RA": -4.42, "CE": -4.45,
+    "LI": -4.48, "CH": -4.50, "LL": -4.55, "BE": -4.58, "MA": -4.60, "SI": -4.62,
+    "OM": -4.65, "UR": -4.68,
+}
+# log10 of English letter frequency / 100 — used as a backoff for unseen bigrams.
+_UNIGRAM_LOG_PROB: Dict[str, float] = {
+    ch: math.log10(max(freq, 0.01) / 100.0) for ch, freq in ENGLISH_FREQ.items()
+}
+_BIGRAM_FLOOR = -8.0
+_BIGRAM_BACKOFF_PENALTY = 1.0  # subtracted from unigram fallback so seen pairs win
+
+
+def english_bigram_score(letters: str) -> float:
+    """Mean log-probability per bigram. Higher (less negative) = more English-like.
+
+    Uses a small bigram table for common pairs; falls back to (log p(a) + log p(b))
+    minus a small penalty for unseen bigrams. The backoff keeps the gradient
+    smooth so hill-climbing doesn't plateau on a floor.
+    """
+    if len(letters) < 2:
+        return _BIGRAM_FLOOR
+    total = 0.0
+    pairs = len(letters) - 1
+    for i in range(pairs):
+        bg = letters[i:i + 2]
+        seen = _BIGRAM_LOG_PROB.get(bg)
+        if seen is not None:
+            total += seen
+        else:
+            total += (
+                _UNIGRAM_LOG_PROB.get(bg[0], -3.0)
+                + _UNIGRAM_LOG_PROB.get(bg[1], -3.0)
+                - _BIGRAM_BACKOFF_PENALTY
+            )
+    return total / pairs
+
+
+def _apply_key(letters: str, key: str) -> str:
+    """Apply a 26-letter substitution key (cipher A..Z -> plaintext)."""
+    return letters.translate(str.maketrans(ALPHABET, key))
+
+
+def hill_climb_substitution(
+    text: str,
+    iterations: int = 4000,
+    restarts: int = 3,
+    seed: int | None = 42,
+) -> Tuple[str, str, float]:
+    """Solve monoalphabetic substitution by hill climbing on bigram log-prob.
+
+    Returns ``(plaintext_guess, key, score)``. ``key`` is a 26-letter string
+    where ``key[i]`` is the plaintext letter for cipher letter ``ALPHABET[i]``.
+
+    Educational only — works on a few hundred letters of English, fails on
+    short or non-English samples. That failure mode is part of the lesson.
+    """
+    import random as _random
+    rng = _random.Random(seed)
+    letters = clean_letters(text)
+    if len(letters) < 30:
+        return text, ALPHABET, _BIGRAM_FLOOR
+
+    # Seed the key from observed letter frequency mapped to English ranking —
+    # this gives the climber a head start over a random permutation.
+    english_order = "ETAOINSHRDLCUMWFGYPBVKJXQZ"
+    observed = [ch for ch, _ in Counter(letters).most_common()]
+    observed += [c for c in ALPHABET if c not in observed]  # fill missing letters
+    seed_key = list(ALPHABET)
+    for cipher_letter, plain_letter in zip(observed, english_order):
+        seed_key[ALPHABET.index(cipher_letter)] = plain_letter
+
+    best_key = "".join(seed_key)
+    best_score = english_bigram_score(_apply_key(letters, best_key))
+
+    for restart in range(max(1, restarts)):
+        current = list(seed_key) if restart == 0 else list(best_key)
+        if restart > 0:
+            # Randomise more aggressively on each restart so we escape local optima.
+            for _ in range(2 + restart):
+                a, b = rng.sample(range(26), 2)
+                current[a], current[b] = current[b], current[a]
+        current_score = english_bigram_score(_apply_key(letters, "".join(current)))
+        no_improve = 0
+        for _ in range(iterations):
+            a, b = rng.sample(range(26), 2)
+            current[a], current[b] = current[b], current[a]
+            score = english_bigram_score(_apply_key(letters, "".join(current)))
+            if score > current_score:
+                current_score = score
+                no_improve = 0
+            else:
+                current[a], current[b] = current[b], current[a]  # revert
+                no_improve += 1
+                if no_improve > iterations // 4:
+                    break
+        if current_score > best_score:
+            best_score = current_score
+            best_key = "".join(current)
+
+    plaintext = _apply_key(text.upper(), best_key)
+    return plaintext, best_key, best_score
+
+
 def frequency_table(letters: str) -> List[Tuple[str, int, float]]:
     n = max(len(letters), 1)
     counts = Counter(letters)
@@ -430,7 +548,9 @@ def heuristic_classify(text: str) -> ModelPrediction:
         scores["plaintext"] += min(0.65, 0.14 * raw_words)
 
     # --- Caesar -------------------------------------------------------------
-    if best_words >= 1:
+    # Skip the boost when shift 0 wins — that means the ciphertext IS plaintext,
+    # not a Caesar cipher. Otherwise plaintext masquerades as caesar_rot.
+    if best_words >= 1 and best_shift != 0:
         scores["caesar_rot"] += min(0.70, 0.22 * best_words)
     if best_shift in {1, 3, 13, 25} and best_chi < 180:
         scores["caesar_rot"] += 0.12
