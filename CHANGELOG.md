@@ -8,25 +8,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- `LICENSE` (MIT).
-- `CONTRIBUTING.md`, `SECURITY.md`, `CITATION.cff`, `CHANGELOG.md`.
+- `LICENSE` (MIT), `CONTRIBUTING.md`, `SECURITY.md`, `CITATION.cff`, `CHANGELOG.md`.
 - `requirements-dev.txt`, `pyproject.toml`, `Makefile` for reproducible dev workflows.
-- `docs/` folder with extended educational notes.
+- `docs/` folder: README, cryptanalysis cheatsheet, educational-boundary, ecosystem.
 - `screenshots/` placeholder folder.
+- `core.py`: Kasiski examination, Friedman key-length estimate, transposition signal,
+  brute-force Affine candidates, `vigenere_decrypt`, `substitution_encrypt`.
+- `app.py`: **Compare Mode** — heuristic vs Transformer side-by-side with disagreement
+  highlighting; richer Explain Mode with Friedman / Kasiski / transposition signals;
+  Substitution added to Challenge Mode.
+- Dataset generator: rich Hugging Face-friendly schema (`id`, `cipher`, `key`,
+  `difficulty`, `language`, `text_length`, `attack_methods`, `educational_note`).
+- `evaluate_baseline.py`: optional `--model` flag to compare a Transformer
+  classifier against the heuristic baseline; richer JSON report including
+  per-class metrics, confusion matrix, and label distribution.
+- Tests: cipher round-trips, edge cases (empty / non-alpha / short input),
+  feature-signal sanity (IoC, entropy, Kasiski, Friedman, transposition),
+  heuristic label correctness for Caesar / Atbash / plaintext, and dataset
+  schema + reproducibility (`--seed`) checks.
 
 ### Changed
-- README expanded with screenshots block, ecosystem links, dataset/model
-  workflow, and explicit educational boundary.
-- Heuristic classifier adds Kasiski / Friedman style indicators for Vigenère.
-- Dataset generator emits a richer, Hugging Face-friendly schema
-  (`id`, `cipher`, `key`, `difficulty`, `language`, `text_length`,
-  `attack_methods`, `educational_note`).
-- Trainer logs macro precision / recall / F1 and persists `label_mapping.json`.
-
-### Notes
-- This release is the first public-launch candidate. No public versions
-  existed prior to this point; everything pre-`0.1.0` should be considered
-  internal scaffolding.
+- `README.md` rewritten as a public-launch README: hero, modes, screenshots,
+  HF Space instructions, dataset/model workflow, evaluation, roadmap,
+  ecosystem, educational boundary, contributing, security, license, citation.
+- `DEPLOY.md` expanded into a step-by-step Hugging Face publish guide.
+- `hf_cards/dataset_README.md` updated to the new dataset schema.
+- `examples/sample_ciphertexts.md` expanded (8 samples + answer key).
+- `requirements.txt` adds `huggingface_hub`; runtime/dev split documented.
+- Heuristic classifier now reports `rail_fence` and `columnar` separately
+  instead of a single generic `transposition` label.
+- `.gitignore` expanded for common Python / Hugging Face artifacts.
 
 ## [0.1.0] — 2026-05-08
 

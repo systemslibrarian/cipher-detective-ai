@@ -19,16 +19,17 @@ import gradio as gr
 
 from core import (
     ModelPrediction,
+    affine_encrypt,
     analyze_evidence,
     atbash,
     build_explanation,
     caesar_encrypt,
     clean_letters,
-    heuristic_classify,
-    vigenere_encrypt,
-    rail_fence_encrypt,
     columnar_transposition_encrypt,
-    affine_encrypt,
+    heuristic_classify,
+    rail_fence_encrypt,
+    substitution_encrypt,
+    vigenere_encrypt,
 )
 
 MODEL = None
@@ -72,10 +73,11 @@ BRAND_CSS = """
 
 
 EXAMPLES = [
-    ["WKLV LV D FODVVLFDO FDHVDU FLSKHU GHPR IRU FLSKHU GHWHFWLYH"],
+    ["WKLV LV D FODVVLFDO FDHVDU FLSKHU GHPR IRU FLSKHU GHWHFWLYH DL"],
     ["GSV XLWV RH ZOO BLFIH GSV VEVIVHG RMP"],
     ["LXFOPVEFRNHR"],
     ["TEITELHDVLSNHDTISEIIEA"],
+    ["EOACT IPTRH IIEEN HSGES SOSCR REMEN AERTC OEFNT TYIHE THCMC"],
     ["THE LIBRARY PRESERVES KNOWLEDGE FOR THE COMMUNITY"],
 ]
 
@@ -126,6 +128,8 @@ def explain_only(ciphertext: str) -> str:
         f"- Letters analyzed: **{ev.letters}**",
         f"- Index of coincidence: **{ev.index_of_coincidence}**",
         f"- Entropy: **{ev.entropy}** bits/letter",
+        f"- Friedman key-length estimate: **{ev.friedman_key_length or '—'}**",
+        f"- Transposition signal: **{ev.transposition_signal}** (bigram support **{ev.bigram_support}**)",
         "",
         "### Top bigrams",
         ", ".join([f"`{bg}` ({n})" for bg, n in ev.top_bigrams]) or "Not enough text.",
@@ -133,10 +137,57 @@ def explain_only(ciphertext: str) -> str:
         "### Top trigrams",
         ", ".join([f"`{tg}` ({n})" for tg, n in ev.top_trigrams]) or "Not enough text.",
         "",
+        "### Kasiski candidate key lengths",
+        ", ".join(f"`{k}` (×{n})" for k, n in ev.kasiski_key_lengths) or "Not enough repeats.",
+        "",
         "### Human reasoning",
     ]
-    lines.extend([f"- {note}" for note in ev.notes] or ["- The sample does not provide a strong single clue. Try a longer ciphertext."])
+    lines.extend(
+        [f"- {note}" for note in ev.notes]
+        or ["- The sample does not provide a strong single clue. Try a longer ciphertext."]
+    )
     return "\n".join(lines)
+
+
+def compare_modes(ciphertext: str) -> Tuple[str, str, str]:
+    """Side-by-side: heuristic vs Transformer, plus an agreement summary."""
+    if not clean_letters(ciphertext):
+        return "Paste text first.", "Paste text first.", ""
+    heur = heuristic_classify(ciphertext)
+    ml = transformer_predict(ciphertext)
+
+    def _table(p: ModelPrediction) -> str:
+        rows = ["| Label | Score |", "|---|---:|"]
+        for label, score in sorted(p.scores.items(), key=lambda kv: kv[1], reverse=True):
+            rows.append(f"| `{label}` | {score:.1%} |")
+        return f"**Top: `{p.label}`** ({p.confidence:.1%})\n\n" + "\n".join(rows)
+
+    heur_md = _table(heur)
+    if ml is None:
+        ml_md = (
+            "_Transformer model not loaded._\n\n"
+            "Set `CIPHER_MODEL_ID` to a Hugging Face model repo (e.g. "
+            "`systemslibrarian/cipher-detective-classifier`) or train one locally with "
+            "`scripts/train_transformer.py`."
+        )
+        agreement = "_Comparison unavailable — only the heuristic baseline is active._"
+    else:
+        ml_md = _table(ml)
+        if ml.label == heur.label:
+            agreement = (
+                f"### ✅ Agreement\nBoth methods predict `{heur.label}`. "
+                f"Combined confidence is reasonable when both agree."
+            )
+        else:
+            agreement = (
+                f"### ⚖️ Disagreement\n"
+                f"- Heuristic: `{heur.label}` ({heur.confidence:.1%})\n"
+                f"- Transformer: `{ml.label}` ({ml.confidence:.1%})\n\n"
+                "Disagreements are *interesting*, not failures. Inspect the Evidence "
+                "Notebook to decide which signal you trust more."
+            )
+    return heur_md, ml_md, agreement
+
 
 
 def make_challenge(cipher_name: str, difficulty: str) -> Tuple[str, str]:
@@ -151,7 +202,9 @@ def make_challenge(cipher_name: str, difficulty: str) -> Tuple[str, str]:
     plain = random.choice(plaintexts)
     label = cipher_name
     if cipher_name == "random":
-        label = random.choice(["caesar_rot", "atbash", "vigenere", "rail_fence", "columnar", "affine"])
+        label = random.choice(
+            ["caesar_rot", "atbash", "vigenere", "rail_fence", "columnar", "affine", "substitution"]
+        )
     if label == "caesar_rot":
         shift = random.choice([3, 5, 7, 13, 19])
         return caesar_encrypt(plain, shift), f"Answer: Caesar / ROT shift {shift}. Plaintext: {plain}"
@@ -169,6 +222,11 @@ def make_challenge(cipher_name: str, difficulty: str) -> Tuple[str, str]:
     if label == "affine":
         a, b = random.choice([(5, 8), (7, 3), (11, 6), (17, 9)])
         return affine_encrypt(plain, a, b), f"Answer: Affine cipher a={a}, b={b}. Plaintext: {plain}"
+    if label == "substitution":
+        alphabet = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+        random.shuffle(alphabet)
+        mapping = "".join(alphabet)
+        return substitution_encrypt(plain, mapping), f"Answer: Monoalphabetic substitution with mapping {mapping}. Plaintext: {plain}"
     return plain, f"Answer: Plaintext. Plaintext: {plain}"
 
 
@@ -215,7 +273,7 @@ with gr.Blocks(css=BRAND_CSS, title="Cipher Detective AI") as demo:
     with gr.Tab("Challenge Mode"):
         with gr.Row():
             cipher_choice = gr.Dropdown(
-                ["random", "caesar_rot", "atbash", "vigenere", "rail_fence", "columnar", "affine"],
+                ["random", "caesar_rot", "atbash", "vigenere", "rail_fence", "columnar", "affine", "substitution"],
                 value="random",
                 label="Challenge type",
             )
@@ -224,6 +282,24 @@ with gr.Blocks(css=BRAND_CSS, title="Cipher Detective AI") as demo:
         challenge_text = gr.Textbox(label="Ciphertext challenge", lines=5)
         answer = gr.Textbox(label="Reveal answer", lines=3)
         challenge_btn.click(make_challenge, inputs=[cipher_choice, difficulty], outputs=[challenge_text, answer])
+
+    with gr.Tab("Compare Mode"):
+        gr.Markdown(
+            "Run the **transparent heuristic baseline** and the **Transformer classifier** "
+            "on the same ciphertext. Disagreements are highlighted — they're often the most "
+            "educational examples."
+        )
+        compare_input = gr.Textbox(label="Ciphertext", lines=7)
+        compare_btn = gr.Button("Compare methods", variant="primary")
+        with gr.Row():
+            heur_out = gr.Markdown(label="Heuristic baseline")
+            ml_out = gr.Markdown(label="Transformer classifier")
+        agreement_out = gr.Markdown()
+        compare_btn.click(
+            compare_modes,
+            inputs=[compare_input],
+            outputs=[heur_out, ml_out, agreement_out],
+        )
 
     with gr.Tab("About / Model Status"):
         gr.Markdown(

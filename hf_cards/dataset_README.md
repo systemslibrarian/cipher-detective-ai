@@ -37,16 +37,28 @@ A labeled educational dataset of classical cipher examples for teaching cryptana
 
 ## Schema
 
+Each line of `cipher_examples.jsonl` is one record:
+
 ```json
 {
-  "text": "ciphertext or plaintext sample",
+  "id": "cda-0000042",
+  "text": "WKLV LV D FODVVLFDO FDHVDU FLSKHU GHPR",
+  "ciphertext": "WKLV LV D FODVVLFDO FDHVDU FLSKHU GHPR",
+  "plaintext": "THIS IS A CLASSICAL CAESAR CIPHER DEMO",
   "label": "caesar_rot",
-  "plaintext": "known educational source text",
-  "metadata": {"shift": 3},
-  "length": 64,
+  "cipher": "caesar_rot",
+  "key": {"shift": 3},
+  "difficulty": "medium",
+  "language": "en",
+  "text_length": 38,
+  "length": 38,
+  "attack_methods": ["brute_force_26", "frequency_analysis", "chi_squared_english"],
+  "educational_note": "Caesar / ROT-N is a single-shift monoalphabetic cipher with only 26 keys.",
   "source": "synthetic_educational"
 }
 ```
+
+`text` and `ciphertext` are kept as aliases for compatibility. `text_length` and `length` likewise.
 
 ## Labels
 

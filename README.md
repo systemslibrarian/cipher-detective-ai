@@ -18,109 +18,99 @@ tags:
   - gradio
 ---
 
-# Cipher Detective AI
+# 🕵️‍♂️ Cipher Detective AI
 
-**See the pattern. Test the hypothesis. Break the weak cipher. Respect the strong ones.**
+> **See the pattern. Test the hypothesis. Break the weak cipher. Respect the strong ones.**
 
-Cipher Detective AI is a Hugging Face-native educational cryptanalysis project. It is designed as a public learning exhibit, not just a hosted web app.
+Cipher Detective AI is an **educational** classical-cryptanalysis exhibit. It teaches how weak historical ciphers leak patterns, how cryptanalysis actually works, and **why modern cryptography is fundamentally different.**
 
-It combines:
+It is built as a Hugging Face-native triple:
 
-1. **Transparent cryptanalysis signals** — frequency analysis, index of coincidence, entropy, Caesar candidates, Atbash checks, n-gram evidence.
-2. **A Transformer classification path** — trainable with `scripts/train_transformer.py` and deployable as a Hugging Face model.
-3. **A dataset-first workflow** — reproducible generation of labeled classical-cipher examples.
-4. **A museum-style learning experience** — Detect Mode, Explain Mode, and Challenge Mode.
+| Artifact | Suggested repo                                              | Role                                         |
+|----------|-------------------------------------------------------------|----------------------------------------------|
+| Space    | `systemslibrarian/cipher-detective-ai`                      | Live interactive exhibit (this app)          |
+| Dataset  | `systemslibrarian/classical-cipher-corpus`                  | Labeled classical-cipher examples            |
+| Model    | `systemslibrarian/cipher-detective-classifier`              | Small Transformer classifier                 |
 
-## Why this belongs on Hugging Face
+**This is not an offensive tool.** It does not break modern encryption, recover passwords, or bypass access controls. See [`docs/educational-boundary.md`](docs/educational-boundary.md).
 
-This project is meant to become three linked Hugging Face artifacts:
+---
 
-| Artifact | Suggested repo | Purpose |
+## ✨ Demo
+
+| Detect Mode | Explain Mode | Compare Mode |
 |---|---|---|
-| Space | `systemslibrarian/cipher-detective-ai` | Live interactive exhibit |
-| Dataset | `systemslibrarian/classical-cipher-corpus` | Labeled classical cipher dataset |
-| Model | `systemslibrarian/cipher-detective-classifier` | Transformer classifier trained on the corpus |
+| ![Detect](screenshots/detect-mode.png) | ![Explain](screenshots/explain-mode.png) | ![Compare](screenshots/compare-mode.png) |
 
-That makes it a real ML education project: dataset, model, evaluation, demo, and documentation.
+> Drop your screenshots into [`screenshots/`](screenshots/) — the README references `detect-mode.png`, `explain-mode.png`, `compare-mode.png`, and `challenge-mode.png`.
 
-## Modes
+---
 
-### Detect Mode
+## 🧭 Modes
 
-Paste ciphertext and receive:
+The Gradio Space ships with **five** modes:
 
-- likely cipher family
-- prediction score
-- evidence report
-- frequency table
-- Caesar / ROT candidates
-- natural-language reasoning
-- clear limitations
+1. **Detect Mode** — paste ciphertext, get a classification, confidence, and a full evidence report (frequency, IoC, entropy, Caesar/Affine candidates, Kasiski/Friedman indicators, transposition signal).
+2. **Explain Mode** — see the raw "evidence notebook" without a verdict — useful for teaching.
+3. **Challenge Mode** — generate practice ciphertexts (Caesar, Atbash, Vigenère, Rail-Fence, Columnar, Affine, Substitution) at chosen difficulty.
+4. **Compare Mode** — run the **transparent heuristic baseline** and the **Transformer classifier** side-by-side, with disagreement analysis.
+5. **About / Model Status** — live status of the loaded model, dataset/model repo references, and the educational-boundary statement.
 
-### Explain Mode
+---
 
-Shows the evidence notebook without overclaiming:
-
-- index of coincidence
-- entropy
-- top letters
-- top bigrams/trigrams
-- clues a human cryptanalyst would inspect
-
-### Challenge Mode
-
-Generates educational cipher challenges for learners.
-
-Supported challenge families:
-
-- Caesar / ROT
-- Atbash
-- Vigenère
-- Rail Fence
-- Columnar Transposition
-- Affine
-
-## Educational boundary
-
-This project teaches classical cryptanalysis. It is **not** designed to:
-
-- break modern encryption
-- recover passwords
-- bypass access controls
-- assist surveillance
-- support unauthorized access
-- claim real-world cryptographic capability
-
-Modern cryptography depends on vetted primitives, protocols, key management, implementation correctness, metadata handling, and threat modeling.
-
-## Local run
+## 🚀 Run locally
 
 ```bash
+git clone https://github.com/systemslibrarian/cipher-detective-ai.git
+cd cipher-detective-ai
+python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 python app.py
 ```
 
-## Generate a dataset
+The Space will be at <http://localhost:7860>.
 
-Quick demo dataset:
+To attach a trained Transformer classifier:
 
 ```bash
-python scripts/generate_dataset.py --out data/cipher_examples.jsonl --n 5000
+export CIPHER_MODEL_ID=systemslibrarian/cipher-detective-classifier   # or a local folder path
+python app.py
 ```
 
-Public-release dataset:
+If the model can't be loaded, the app **always** falls back to the transparent heuristic baseline.
+
+---
+
+## 🧪 Tests
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
+Coverage spans cipher round-trips, edge cases (empty / non-alpha input), feature signals (IoC, entropy, Kasiski, Friedman, transposition), the heuristic classifier, and the dataset generator schema.
+
+---
+
+## 🗂️ Generate the dataset
+
+Quick demo (5,000 rows):
+
+```bash
+python scripts/generate_dataset.py --out data/cipher_examples.jsonl --n 5000 --seed 42
+```
+
+Public-release size (50,000 rows):
 
 ```bash
 python scripts/generate_dataset.py --out data/cipher_examples.jsonl --n 50000 --seed 42
 ```
 
-## Evaluate the heuristic baseline
+Each row includes `id`, `text`, `ciphertext`, `plaintext`, `label`, `cipher`, `key`, `difficulty`, `language`, `text_length`, `attack_methods`, and `educational_note` — see [`hf_cards/dataset_README.md`](hf_cards/dataset_README.md).
 
-```bash
-python scripts/evaluate_baseline.py --data data/cipher_examples.jsonl --out reports/baseline_metrics.json
-```
+---
 
-## Train the Transformer classifier
+## 🧠 Train the model
 
 ```bash
 python scripts/train_transformer.py \
@@ -130,42 +120,103 @@ python scripts/train_transformer.py \
   --epochs 3
 ```
 
-To use a hosted model in the Space, set this environment variable:
+Outputs land in `cipher_model/`:
 
-```text
-CIPHER_MODEL_ID=systemslibrarian/cipher-detective-classifier
+- model + tokenizer
+- `training_metrics.json` (accuracy, macro precision/recall/F1)
+- `label_mapping.json` (`label2id` / `id2label`)
+
+To upload to the Hub afterwards:
+
+```bash
+huggingface-cli login
+huggingface-cli upload systemslibrarian/cipher-detective-classifier ./cipher_model
 ```
 
-## Dataset labels
+---
 
-- `plaintext`
-- `caesar_rot`
-- `atbash`
-- `vigenere`
-- `rail_fence`
-- `columnar`
-- `affine`
-- `substitution`
+## 📊 Evaluate
 
-## Project posture
+Heuristic baseline only:
 
-This project is part of a broader cryptography education path:
+```bash
+python scripts/evaluate_baseline.py --data data/cipher_examples.jsonl --out reports/baseline_metrics.json
+```
 
-> Learn historical ciphers, compare algorithms, experiment with cryptographic ideas, and then apply secure engineering with honest threat models.
+Compare heuristic vs Transformer:
 
-Cipher Detective AI focuses on the missing bridge: **how weak ciphers leak patterns and how those clues are discovered.**
+```bash
+python scripts/evaluate_baseline.py \
+  --data data/cipher_examples.jsonl \
+  --model cipher_model \
+  --out reports/baseline_metrics.json
+```
 
-## Quality checklist before a major public launch
+Report includes accuracy, macro F1, per-class precision/recall/F1, confusion matrix, and the dataset's label distribution.
 
-- [ ] Generate 50k+ examples.
-- [ ] Publish `classical-cipher-corpus` Dataset repo.
-- [ ] Train `cipher-detective-classifier`.
-- [ ] Publish model card with accuracy, macro F1, confusion matrix, and limitations.
-- [ ] Set `CIPHER_MODEL_ID` in the Space.
-- [ ] Add screenshots/GIFs to the README.
-- [ ] Link from Cipher Museum, Crypto Lab, and GitHub profile.
-- [ ] Add examples it gets wrong and explain why.
+---
 
-## License
+## 🏷️ Labels
 
-MIT.
+`plaintext`, `caesar_rot`, `atbash`, `vigenere`, `rail_fence`, `columnar`, `affine`, `substitution`.
+
+---
+
+## 🛣️ Roadmap
+
+- [ ] Publish `classical-cipher-corpus` dataset (50k rows).
+- [ ] Train and publish `cipher-detective-classifier`.
+- [ ] Add `screenshots/` images.
+- [ ] Add hill-climbing solver demo for monoalphabetic substitution (educational only).
+- [ ] Per-length and per-difficulty evaluation buckets.
+- [ ] Calibration plot (heuristic confidence vs accuracy).
+- [ ] Multilingual plaintext sources (clearly labeled).
+- [ ] Linked exhibit pages from Cipher Museum / Crypto Lab.
+
+See [`CHANGELOG.md`](CHANGELOG.md) for what's already shipped.
+
+---
+
+## 🌐 Ecosystem
+
+Cipher Detective AI is part of a broader cryptography-education path:
+
+- **Cipher Museum** — curated history of ciphers _(link placeholder)_
+- **Crypto Compare** — algorithm comparisons _(link placeholder)_
+- **Crypto Lab** — hands-on experimentation _(link placeholder)_
+- **Meow Decoder** — friendly entry point _(link placeholder)_
+
+See [`docs/ecosystem.md`](docs/ecosystem.md).
+
+---
+
+## 🛡️ Educational boundary
+
+This project teaches classical cryptanalysis. It is **not** designed to:
+
+- break modern encryption (AES, ChaCha20, RSA, ECC, TLS, age, PGP),
+- recover passwords or password hashes,
+- bypass access controls or DRM,
+- support surveillance or unauthorized access,
+- make claims about real-world cryptographic security.
+
+Modern cryptography depends on vetted primitives, protocols, key management, implementation correctness, metadata handling, and an honest threat model. None of the techniques shown here apply to it. See [`docs/educational-boundary.md`](docs/educational-boundary.md).
+
+---
+
+## 🤝 Contributing
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md). Honest, transparent, education-first contributions are very welcome.
+
+## 🔐 Security
+
+See [`SECURITY.md`](SECURITY.md) for how to report a vulnerability.
+
+## 📜 License
+
+MIT — see [`LICENSE`](LICENSE).
+
+## 📚 Citation
+
+If you use this in teaching or writing, see [`CITATION.cff`](CITATION.cff).
+
