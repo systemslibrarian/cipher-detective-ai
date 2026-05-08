@@ -1,0 +1,7 @@
+__pycache__/
+.pytest_cache/
+.venv/
+cipher_model/
+reports/
+*.pyc
+.DS_Store
