@@ -1,7 +1,27 @@
 __pycache__/
 .pytest_cache/
+.ruff_cache/
+.mypy_cache/
 .venv/
+venv/
+env/
 cipher_model/
 reports/
+data/*.jsonl
+data/*.csv
 *.pyc
+*.pyo
 .DS_Store
+build/
+dist/
+*.egg-info/
+.coverage
+htmlcov/
+.ipynb_checkpoints/
+.huggingface/
+wandb/
+*.log
+
+# Keep folder structure for empty data/ and reports/ dirs
+!data/.gitkeep
+!reports/.gitkeep
