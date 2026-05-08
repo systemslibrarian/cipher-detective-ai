@@ -1,0 +1,26 @@
+cff-version: 1.2.0
+message: "If you use Cipher Detective AI in teaching, research, or writing, please cite it."
+title: "Cipher Detective AI: an educational classical-cryptanalysis exhibit"
+abstract: >
+  Cipher Detective AI is a Hugging Face-native educational project that combines
+  transparent classical cryptanalysis signals (frequency analysis, index of
+  coincidence, entropy, Caesar/Atbash/Vigenère indicators) with an optional
+  small Transformer classifier to identify classical cipher families. It is
+  designed as a teaching exhibit, not as a tool for breaking modern encryption.
+authors:
+  - family-names: "systemslibrarian"
+    given-names: ""
+    affiliation: "Independent"
+license: MIT
+repository-code: "https://github.com/systemslibrarian/cipher-detective-ai"
+url: "https://huggingface.co/spaces/systemslibrarian/cipher-detective-ai"
+keywords:
+  - cryptography
+  - cryptanalysis
+  - classical-ciphers
+  - education
+  - text-classification
+  - transformers
+  - huggingface
+version: "0.1.0"
+date-released: "2026-05-08"
