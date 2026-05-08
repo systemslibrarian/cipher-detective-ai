@@ -11,6 +11,28 @@ from typing import Dict, Iterable, List
 ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 AFFINE_A_VALUES = [1, 3, 5, 7, 9, 11, 15, 17, 19, 21, 23, 25]
 
+ATTACKS: Dict[str, List[str]] = {
+    "plaintext":   [],
+    "caesar_rot":  ["brute_force_26", "frequency_analysis", "chi_squared_english"],
+    "atbash":      ["self_inverse_check", "frequency_analysis"],
+    "vigenere":    ["kasiski_examination", "friedman_test", "index_of_coincidence", "frequency_per_column"],
+    "rail_fence":  ["rail_count_search", "anagram_recovery"],
+    "columnar":    ["key_length_search", "anagram_recovery"],
+    "affine":      ["brute_force_312", "frequency_analysis"],
+    "substitution":["frequency_analysis", "pattern_words", "hill_climbing_lm"],
+}
+
+EDU_NOTES: Dict[str, str] = {
+    "plaintext":   "No cipher applied. Useful as a negative-class baseline.",
+    "caesar_rot":  "Caesar / ROT-N is a single-shift monoalphabetic cipher with only 26 keys.",
+    "atbash":      "Atbash maps A↔Z, B↔Y, … and is its own inverse — no key needed.",
+    "vigenere":    "Vigenère uses a repeating-key Caesar shift; vulnerable to Kasiski and Friedman analysis.",
+    "rail_fence":  "Rail-fence is a transposition cipher: it rearranges letters along a zig-zag pattern.",
+    "columnar":    "Columnar transposition writes plaintext into rows and reads columns in key order.",
+    "affine":      "Affine cipher: E(x) = (a·x + b) mod 26 with a coprime to 26 — only 312 keys.",
+    "substitution":"Monoalphabetic substitution with an arbitrary 26-letter permutation.",
+}
+
 BASE_SENTENCES = [
     "THE LIBRARY PRESERVES KNOWLEDGE FOR THE COMMUNITY",
     "CRYPTOGRAPHY REWARDS PATIENCE AND CAREFUL THINKING",
@@ -113,42 +135,59 @@ def make_plain() -> str:
         plain += " " + random.choice(["TODAY", "TOMORROW", "CAREFULLY", "HONESTLY", "SLOWLY"])
     return plain
 
-def record(label: str, plaintext: str, ciphertext: str, meta: Dict[str, object]) -> Dict[str, object]:
+def record(label: str, plaintext: str, ciphertext: str, meta: Dict[str, object], rid: int) -> Dict[str, object]:
+    text_clean = clean(ciphertext)
+    text_with_spacing = with_spacing(ciphertext)
+    if len(text_clean) < 30:
+        difficulty = "easy"
+    elif len(text_clean) < 80:
+        difficulty = "medium"
+    else:
+        difficulty = "hard"
+    attack_methods = ATTACKS.get(label, [])
     return {
-        "text": with_spacing(ciphertext),
-        "label": label,
+        "id": f"cda-{rid:07d}",
+        "text": text_with_spacing,
+        "ciphertext": text_with_spacing,
         "plaintext": plaintext,
-        "metadata": meta,
-        "length": len(clean(ciphertext)),
+        "label": label,
+        "cipher": label,
+        "key": meta,
+        "difficulty": difficulty,
+        "language": "en",
+        "text_length": len(text_clean),
+        "length": len(text_clean),
+        "attack_methods": attack_methods,
+        "educational_note": EDU_NOTES.get(label, ""),
         "source": "synthetic_educational",
     }
 
-def build_row(label: str, keys: List[str]) -> Dict[str, object]:
+def build_row(label: str, keys: List[str], rid: int) -> Dict[str, object]:
     plain = make_plain()
     if label == "plaintext":
-        return record(label, plain, plain, {})
+        return record(label, plain, plain, {}, rid)
     if label == "caesar_rot":
         shift = random.randint(1, 25)
-        return record(label, plain, caesar(plain, shift), {"shift": shift})
+        return record(label, plain, caesar(plain, shift), {"shift": shift}, rid)
     if label == "atbash":
-        return record(label, plain, atbash(plain), {})
+        return record(label, plain, atbash(plain), {}, rid)
     if label == "vigenere":
         key = random.choice(keys)
-        return record(label, plain, vigenere(plain, key), {"key": key})
+        return record(label, plain, vigenere(plain, key), {"key": key}, rid)
     if label == "rail_fence":
         rails = random.choice([2, 3, 4, 5])
-        return record(label, plain, rail_fence(plain, rails), {"rails": rails})
+        return record(label, plain, rail_fence(plain, rails), {"rails": rails}, rid)
     if label == "columnar":
         key = random.choice(keys)
-        return record(label, plain, columnar(plain, key), {"key": key})
+        return record(label, plain, columnar(plain, key), {"key": key}, rid)
     if label == "affine":
         a, b = random.choice(AFFINE_A_VALUES), random.randint(0, 25)
-        return record(label, plain, affine(plain, a, b), {"a": a, "b": b})
+        return record(label, plain, affine(plain, a, b), {"a": a, "b": b}, rid)
     if label == "substitution":
         alphabet = list(ALPHABET)
         random.shuffle(alphabet)
         alphabet = "".join(alphabet)
-        return record(label, plain, substitution(plain, alphabet), {"alphabet": alphabet})
+        return record(label, plain, substitution(plain, alphabet), {"alphabet": alphabet}, rid)
     raise ValueError(label)
 
 def main() -> None:
@@ -170,7 +209,7 @@ def main() -> None:
             label = labels[i % len(labels)]
             if i >= len(labels):
                 label = random.choice(labels)
-            f.write(json.dumps(build_row(label, keys), ensure_ascii=False) + "\n")
+            f.write(json.dumps(build_row(label, keys, i), ensure_ascii=False) + "\n")
 
     print(f"Wrote {args.n:,} examples to {out}")
 

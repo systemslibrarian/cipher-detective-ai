@@ -18,6 +18,8 @@ from dataclasses import dataclass
 from typing import Dict, List, Tuple
 
 ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+ENGLISH_IOC = 0.0667        # English plaintext / monoalphabetic baseline.
+RANDOM_IOC = 1.0 / 26.0     # ~0.0385 — uniform random letters.
 ENGLISH_FREQ = {
     "A": 8.167, "B": 1.492, "C": 2.782, "D": 4.253, "E": 12.702, "F": 2.228,
     "G": 2.015, "H": 6.094, "I": 6.966, "J": 0.153, "K": 0.772, "L": 4.025,
@@ -52,6 +54,11 @@ class Evidence:
     top_trigrams: List[Tuple[str, int]]
     caesar_candidates: List[Tuple[int, float, int, str]]
     atbash_plaintext: str
+    affine_candidates: List[Tuple[int, int, float, int, str]]
+    friedman_key_length: float
+    kasiski_key_lengths: List[Tuple[int, int]]
+    transposition_signal: float
+    bigram_support: float
     notes: List[str]
 
 
@@ -129,6 +136,30 @@ def vigenere_encrypt(text: str, key: str) -> str:
         else:
             out.append(ch)
     return "".join(out)
+
+
+def vigenere_decrypt(text: str, key: str) -> str:
+    """Inverse of :func:`vigenere_encrypt`."""
+    key = clean_letters(key)
+    if not key:
+        raise ValueError("key must contain at least one A-Z letter")
+    out, j = [], 0
+    for ch in text.upper():
+        if ch in ALPHABET:
+            k = ALPHABET.index(key[j % len(key)])
+            out.append(ALPHABET[(ALPHABET.index(ch) - k) % 26])
+            j += 1
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+def substitution_encrypt(text: str, mapping: str) -> str:
+    """Monoalphabetic substitution. ``mapping`` is a 26-letter permutation."""
+    mapping = mapping.upper()
+    if len(mapping) != 26 or set(mapping) != set(ALPHABET):
+        raise ValueError("mapping must be a permutation of A-Z")
+    return text.upper().translate(str.maketrans(ALPHABET, mapping))
 
 
 def rail_fence_encrypt(text: str, rails: int = 3) -> str:
@@ -214,10 +245,91 @@ def best_caesar_candidates(text: str, top_n: int = 5) -> List[Tuple[int, float, 
     return candidates[:top_n]
 
 
+def best_affine_candidates(text: str, top_n: int = 5) -> List[Tuple[int, int, float, int, str]]:
+    """Brute-force the 312 valid Affine keys and return the most English-looking decryptions."""
+    candidates: List[Tuple[int, int, float, int, str]] = []
+    for a in (1, 3, 5, 7, 9, 11, 15, 17, 19, 21, 23, 25):
+        for b in range(26):
+            try:
+                decoded = affine_decrypt(text, a, b)
+            except ValueError:
+                continue
+            letters = clean_letters(decoded)
+            chi = chi_squared_for_english(letters)
+            score = word_score(decoded)
+            candidates.append((a, b, chi, score, decoded))
+    candidates.sort(key=lambda x: (-x[3], x[2]))
+    return candidates[:top_n]
+
+
+def friedman_key_length(letters: str) -> float:
+    """Friedman estimate of Vigenère key length from the index of coincidence.
+
+    Returns ``0.0`` if the sample is too short or the IoC is too close to random.
+    """
+    n = len(letters)
+    if n < 40:
+        return 0.0
+    ioc = index_of_coincidence(letters)
+    denom = (n - 1) * ioc - RANDOM_IOC * n + ENGLISH_IOC
+    if denom <= 1e-6:
+        return 0.0
+    k = (ENGLISH_IOC - RANDOM_IOC) * n / denom
+    return max(0.0, k)
+
+
+def kasiski_key_lengths(letters: str, min_len: int = 3, top: int = 5) -> List[Tuple[int, int]]:
+    """Kasiski examination: factor distances between repeated trigrams.
+
+    Returns ``[(candidate_length, support_count), ...]`` sorted by support.
+    """
+    if len(letters) < 30:
+        return []
+    positions: Dict[str, List[int]] = {}
+    for i in range(len(letters) - min_len + 1):
+        positions.setdefault(letters[i:i + min_len], []).append(i)
+    factor_support: Counter = Counter()
+    for _gram, idxs in positions.items():
+        if len(idxs) < 2:
+            continue
+        for a, b in zip(idxs, idxs[1:]):
+            d = b - a
+            for k in range(2, min(21, d + 1)):
+                if d % k == 0:
+                    factor_support[k] += 1
+    return factor_support.most_common(top)
+
+
+def transposition_signal(letters: str) -> Tuple[float, float]:
+    """Heuristic signal for transposition ciphers.
+
+    Transposition keeps English letter frequencies intact (so chi-squared looks
+    English-like) but destroys common bigrams. Returns ``(transposition, bigram_support)``
+    in ``[0, 1]``. High ``transposition`` and low ``bigram_support`` together
+    suggest rail-fence / columnar.
+    """
+    n = len(letters)
+    if n < 30:
+        return 0.0, 0.0
+    chi = chi_squared_for_english(letters)
+    # Normalise chi against a soft cap so values >= 200 saturate to 0.
+    english_likeness = max(0.0, 1.0 - min(chi, 200.0) / 200.0)
+    bigrams = ngram_counts(letters, 2, top=200)
+    total_bigrams = max(1, n - 1)
+    common_hits = sum(
+        c for bg, c in bigrams
+        if bg in {"TH", "HE", "IN", "ER", "AN", "RE", "ON", "AT", "EN", "ND"}
+    )
+    bigram_support = min(1.0, common_hits / (total_bigrams * 0.06))  # ~6% in English
+    transposition = english_likeness * (1.0 - bigram_support)
+    return round(transposition, 4), round(bigram_support, 4)
+
+
 def frequency_table(letters: str) -> List[Tuple[str, int, float]]:
     n = max(len(letters), 1)
     counts = Counter(letters)
     return [(ch, count, round(100 * count / n, 2)) for ch, count in counts.most_common()]
+
 
 
 def analyze_evidence(text: str) -> Evidence:
@@ -227,21 +339,35 @@ def analyze_evidence(text: str) -> Evidence:
     entropy = shannon_entropy(letters)
     chi = chi_squared_for_english(letters)
     caesar_candidates = best_caesar_candidates(text, 5)
+    affine_cands = best_affine_candidates(text, 5) if len(letters) >= 30 else []
     atbash_plain = atbash(text)
+    friedman = round(friedman_key_length(letters), 2)
+    kasiski = kasiski_key_lengths(letters)
+    transp, bigram_sup = transposition_signal(letters)
 
     notes: List[str] = []
     if len(letters) < 40:
         notes.append("Short samples are hard to classify reliably. Add more ciphertext for better evidence.")
     if 0.060 <= ioc <= 0.075:
-        notes.append("Index of coincidence is close to natural English, which often points to monoalphabetic substitution, transposition, or plaintext.")
+        notes.append("Index of coincidence is close to natural English (~0.067), which often points to plaintext, monoalphabetic substitution, or transposition.")
     elif 0.035 <= ioc <= 0.050:
-        notes.append("Index of coincidence is lower than English, which can suggest polyalphabetic ciphers such as Vigenère.")
+        notes.append("Index of coincidence is below English, which can suggest a polyalphabetic cipher such as Vigenère.")
     if caesar_candidates and caesar_candidates[0][2] > 0:
         notes.append(f"Caesar shift {caesar_candidates[0][0]} produces recognizable English words.")
+    if affine_cands and affine_cands[0][3] > 0:
+        a, b, _, words, _ = affine_cands[0]
+        notes.append(f"Affine key (a={a}, b={b}) produces {words} English-word match(es).")
     if word_score(atbash_plain) > 0:
         notes.append("Atbash reversal produces recognizable English words.")
+    if friedman and 2 <= friedman <= 12:
+        notes.append(f"Friedman estimate suggests a Vigenère-like key length near {friedman:.1f}.")
+    if kasiski:
+        top_k = ", ".join(f"{k} (×{n})" for k, n in kasiski[:3])
+        notes.append(f"Kasiski-style repeated trigrams support key length(s): {top_k}.")
+    if transp >= 0.55 and bigram_sup <= 0.35:
+        notes.append("Letter frequencies look English but common bigrams (TH, HE, IN…) are scarce — classic transposition signature.")
     if entropy > 4.2:
-        notes.append("Entropy is relatively high for A-Z text; this may indicate stronger mixing or a short/noisy sample.")
+        notes.append("Entropy is relatively high for A–Z text; this may indicate stronger mixing or a short/noisy sample.")
     if len(set(letters)) < 10 and len(letters) > 20:
         notes.append("Very few unique letters; this sample may be too constrained or not normal prose.")
 
@@ -256,53 +382,112 @@ def analyze_evidence(text: str) -> Evidence:
         top_trigrams=ngram_counts(letters, 3),
         caesar_candidates=caesar_candidates,
         atbash_plaintext=atbash_plain,
+        affine_candidates=affine_cands,
+        friedman_key_length=friedman,
+        kasiski_key_lengths=kasiski,
+        transposition_signal=transp,
+        bigram_support=bigram_sup,
         notes=notes,
     )
 
 
 def heuristic_classify(text: str) -> ModelPrediction:
+    """Transparent heuristic classifier.
+
+    Returns a normalized score per label. The label set matches the dataset:
+    ``plaintext, caesar_rot, atbash, vigenere, rail_fence, columnar, affine, substitution``.
+    """
     letters = clean_letters(text)
     if len(letters) < 20:
-        return ModelPrediction("too_short", 0.20, {"too_short": 0.20}, "heuristic")
+        return ModelPrediction(
+            "too_short",
+            0.20,
+            {"too_short": 0.20},
+            "heuristic",
+        )
 
     ev = analyze_evidence(text)
     ioc = ev.index_of_coincidence
-    best_shift, best_chi, best_words, _best_plain = ev.caesar_candidates[0]
+    best_shift, best_chi, best_words, _ = ev.caesar_candidates[0]
     atbash_words = word_score(ev.atbash_plaintext)
+    affine_words = ev.affine_candidates[0][3] if ev.affine_candidates else 0
     raw_words = word_score(text)
     raw_chi = chi_squared_for_english(letters)
 
-    scores = {
-        "plaintext": 0.05,
-        "caesar_rot": 0.05,
-        "atbash": 0.05,
-        "vigenere": 0.05,
-        "transposition": 0.05,
-        "substitution": 0.05,
-        "affine": 0.04,
+    scores: Dict[str, float] = {
+        "plaintext":   0.04,
+        "caesar_rot":  0.04,
+        "atbash":      0.04,
+        "vigenere":    0.04,
+        "rail_fence":  0.04,
+        "columnar":    0.04,
+        "substitution": 0.04,
+        "affine":      0.04,
     }
 
+    # --- Plaintext ----------------------------------------------------------
     if raw_words >= 2 and raw_chi < 180:
-        scores["plaintext"] += min(0.55, 0.12 * raw_words)
+        scores["plaintext"] += min(0.65, 0.14 * raw_words)
+
+    # --- Caesar -------------------------------------------------------------
     if best_words >= 1:
-        scores["caesar_rot"] += min(0.70, 0.20 * best_words)
-    if best_shift in {13, 3, 1, 25} and best_chi < 180:
+        scores["caesar_rot"] += min(0.70, 0.22 * best_words)
+    if best_shift in {1, 3, 13, 25} and best_chi < 180:
         scores["caesar_rot"] += 0.12
+
+    # --- Atbash -------------------------------------------------------------
     if atbash_words >= 1:
-        scores["atbash"] += min(0.70, 0.22 * atbash_words)
+        scores["atbash"] += min(0.75, 0.24 * atbash_words)
+
+    # --- Affine -------------------------------------------------------------
+    # Only fire if the affine guess is *better* than the best Caesar guess —
+    # otherwise the same word matches will inflate both labels.
+    if affine_words >= max(2, best_words + 1):
+        scores["affine"] += min(0.65, 0.18 * affine_words)
+
+    # --- Vigenère -----------------------------------------------------------
+    fried = ev.friedman_key_length
+    kas_support = sum(n for _, n in ev.kasiski_key_lengths[:3])
     if 0.034 <= ioc <= 0.050 and len(letters) > 60:
-        scores["vigenere"] += 0.35
-    if 0.055 <= ioc <= 0.080 and raw_words == 0 and best_words == 0:
-        scores["substitution"] += 0.25
-        scores["transposition"] += 0.18
-    if ev.entropy > 4.0 and len(letters) > 50:
-        scores["vigenere"] += 0.12
-        scores["transposition"] += 0.08
+        scores["vigenere"] += 0.30
+    if 2 <= fried <= 12:
+        scores["vigenere"] += 0.20
+    if kas_support >= 3:
+        scores["vigenere"] += min(0.20, 0.04 * kas_support)
+    if ev.entropy > 4.0 and len(letters) > 50 and raw_words == 0 and best_words == 0:
+        scores["vigenere"] += 0.08
+
+    # --- Transposition (rail_fence + columnar share the signal) -------------
+    if ev.transposition_signal >= 0.50 and ev.bigram_support <= 0.40:
+        # Split the bonus; columnar tends to leave longer English-like runs,
+        # rail-fence shorter ones. Without a key we can't be certain — give
+        # rail_fence a slight edge on shorter samples.
+        bonus = min(0.55, 0.7 * ev.transposition_signal)
+        if len(letters) <= 80:
+            scores["rail_fence"] += bonus
+            scores["columnar"]   += bonus * 0.7
+        else:
+            scores["columnar"]   += bonus
+            scores["rail_fence"] += bonus * 0.7
+
+    # --- Substitution -------------------------------------------------------
+    # English-like IoC, no Caesar/Atbash/Affine match, and bigrams *also*
+    # don't look English (because the substitution permutes them).
+    if (
+        0.055 <= ioc <= 0.080
+        and raw_words == 0
+        and best_words == 0
+        and atbash_words == 0
+        and affine_words == 0
+        and ev.bigram_support <= 0.55
+    ):
+        scores["substitution"] += 0.45
 
     total = sum(scores.values())
     norm = {k: round(v / total, 4) for k, v in scores.items()}
     label = max(norm, key=norm.get)
     return ModelPrediction(label, norm[label], norm, "heuristic")
+
 
 
 def build_explanation(text: str, pred: ModelPrediction) -> str:
@@ -336,6 +521,29 @@ def build_explanation(text: str, pred: ModelPrediction) -> str:
         preview = decoded[:110].replace("\n", " ")
         lines.append(f"| {shift} | {score} | {chi:.2f} | `{preview}` |")
 
+    if ev.affine_candidates:
+        lines += [
+            "",
+            "### Top Affine candidates",
+            "| a | b | Word clues | Chi-squared | Preview |",
+            "|---:|---:|---:|---:|---|",
+        ]
+        for a, b, chi, score, decoded in ev.affine_candidates[:3]:
+            preview = decoded[:90].replace("\n", " ")
+            lines.append(f"| {a} | {b} | {score} | {chi:.2f} | `{preview}` |")
+
+    lines += [
+        "",
+        "### Polyalphabetic indicators",
+        f"- Friedman key-length estimate: **{ev.friedman_key_length or '—'}**",
+        "- Kasiski candidate key lengths: "
+        + (", ".join(f"`{k}` (×{n})" for k, n in ev.kasiski_key_lengths[:5]) or "—"),
+        "",
+        "### Transposition indicators",
+        f"- Transposition signal: **{ev.transposition_signal}** (high = English letters but disrupted bigrams)",
+        f"- English-bigram support: **{ev.bigram_support}**",
+    ]
+
     lines += [
         "",
         "### Top letter frequencies",
@@ -351,3 +559,4 @@ def build_explanation(text: str, pred: ModelPrediction) -> str:
         "This project teaches classical cryptanalysis signals. It does **not** break modern encryption, recover passwords, bypass access controls, or prove anything about real-world cryptographic security.",
     ]
     return "\n".join(lines)
+
