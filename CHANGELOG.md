@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Solve Substitution tab**: hill-climbing solver for monoalphabetic substitution,
+  seeded from observed letter-frequency rank, scored by English bigram log-prob,
+  with random restarts to escape local optima. Educational only.
+- **"Random example" button** in Detect Mode for one-click demos.
+- `evaluate_baseline.py`: per-difficulty and per-length-bucket accuracy + macro-F1
+  breakdowns alongside the overall metrics.
+- `requirements.txt`: explicit `torch>=2.2.0` pin so the Transformer pipeline
+  actually loads on a fresh Hugging Face Space.
 - `LICENSE` (MIT), `CONTRIBUTING.md`, `SECURITY.md`, `CITATION.cff`, `CHANGELOG.md`.
 - `requirements-dev.txt`, `pyproject.toml`, `Makefile` for reproducible dev workflows.
 - `docs/` folder: README, cryptanalysis cheatsheet, educational-boundary, ecosystem.
@@ -26,6 +34,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   feature-signal sanity (IoC, entropy, Kasiski, Friedman, transposition),
   heuristic label correctness for Caesar / Atbash / plaintext, and dataset
   schema + reproducibility (`--seed`) checks.
+
+### Fixed
+- **Boot-blocker**: removed unsupported `aria_label=` kwargs from `gr.Textbox`,
+  `gr.Dropdown`, and `gr.Button` calls — these crash Gradio 4.44 on launch.
+  Accessibility names are still provided through `label=` and `info=`.
 
 ### Changed
 - `README.md` rewritten as a public-launch README: hero, modes, screenshots,

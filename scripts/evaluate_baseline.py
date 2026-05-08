@@ -51,6 +51,39 @@ def evaluate(y_true, y_pred, labels):
     }
 
 
+def _length_bucket(n: int) -> str:
+    if n < 50:
+        return "xs (<50)"
+    if n < 100:
+        return "s (50-99)"
+    if n < 200:
+        return "m (100-199)"
+    if n < 400:
+        return "l (200-399)"
+    return "xl (>=400)"
+
+
+def bucketed_metrics(rows, y_true, y_pred, labels, key):
+    """Group accuracy + macro-F1 by a row attribute (e.g. difficulty, length bucket)."""
+    buckets: dict[str, list[int]] = {}
+    for i, r in enumerate(rows):
+        if key == "length_bucket":
+            bucket = _length_bucket(int(r.get("text_length") or r.get("length") or 0))
+        else:
+            bucket = str(r.get(key, "unknown"))
+        buckets.setdefault(bucket, []).append(i)
+    out = {}
+    for bucket, idxs in sorted(buckets.items()):
+        yt = [y_true[i] for i in idxs]
+        yp = [y_pred[i] for i in idxs]
+        out[bucket] = {
+            "n": len(idxs),
+            "accuracy": accuracy_score(yt, yp),
+            "macro_f1": f1_score(yt, yp, labels=labels, average="macro", zero_division=0),
+        }
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser(description="Evaluate the heuristic baseline (and optionally a Transformer model).")
     ap.add_argument("--data", default="data/cipher_examples.jsonl")
@@ -71,6 +104,10 @@ def main():
     # Map any "too_short" predictions to a neutral fallback so metrics stay well-defined.
     y_pred_heur = [p if p in labels else "plaintext" for p in y_pred_heur]
 
+    heuristic_block = evaluate(y_true, y_pred_heur, labels)
+    heuristic_block["by_difficulty"] = bucketed_metrics(rows, y_true, y_pred_heur, labels, "difficulty")
+    heuristic_block["by_length"] = bucketed_metrics(rows, y_true, y_pred_heur, labels, "length_bucket")
+
     report = {
         "dataset": {
             "path": args.data,
@@ -78,7 +115,7 @@ def main():
             "labels": labels,
             "label_distribution": dict(Counter(y_true)),
         },
-        "heuristic": evaluate(y_true, y_pred_heur, labels),
+        "heuristic": heuristic_block,
         "note": (
             "Heuristic baseline is intentionally transparent and imperfect. "
             "Use it as a comparison point for the Transformer model. None of these "
@@ -90,10 +127,10 @@ def main():
         ml_preds = transformer_predictions(texts, args.model)
         if ml_preds is not None:
             ml_preds = [p if p in labels else "plaintext" for p in ml_preds]
-            report["transformer"] = {
-                "model_id": args.model,
-                **evaluate(y_true, ml_preds, labels),
-            }
+            ml_block = evaluate(y_true, ml_preds, labels)
+            ml_block["by_difficulty"] = bucketed_metrics(rows, y_true, ml_preds, labels, "difficulty")
+            ml_block["by_length"] = bucketed_metrics(rows, y_true, ml_preds, labels, "length_bucket")
+            report["transformer"] = {"model_id": args.model, **ml_block}
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
