@@ -49,14 +49,16 @@ def main():
     label2id = {label: i for i, label in enumerate(labels)}
     id2label = {i: label for label, i in label2id.items()}
 
-    for r in rows:
-        r["label_id"] = label2id[r["label"]]
+    # Keep only the two columns needed for training.  The rich dataset schema
+    # contains heterogeneous dict fields (e.g. `key`) that would cause PyArrow
+    # schema-inference failures inside Dataset.from_list().
+    rows = [{"text": r["text"], "label_id": label2id[r["label"]]} for r in rows]
 
     train_rows, test_rows = train_test_split(
         rows,
         test_size=0.2,
         random_state=42,
-        stratify=[r["label"] for r in rows],
+        stratify=[r["label_id"] for r in rows],
     )
 
     ds_train = Dataset.from_list(train_rows)

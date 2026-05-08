@@ -19,17 +19,25 @@ import gradio as gr
 
 from core import (
     ModelPrediction,
+    affine_decrypt,
     affine_encrypt,
     analyze_evidence,
     atbash,
+    best_affine_candidates,
+    best_caesar_candidates,
     build_explanation,
     caesar_encrypt,
+    caesar_shift,
+    chi_squared_for_english,
     clean_letters,
     columnar_transposition_encrypt,
     heuristic_classify,
     rail_fence_encrypt,
+    shannon_entropy,
     substitution_encrypt,
+    vigenere_decrypt,
     vigenere_encrypt,
+    word_score,
 )
 
 MODEL = None
@@ -48,26 +56,116 @@ except Exception as exc:  # The heuristic path is intentionally always available
 
 
 BRAND_CSS = """
-.gradio-container {max-width: 1180px !important}
+/* ── Layout ─────────────────────────────────────────────────────────────── */
+.gradio-container {
+  max-width: 1180px !important;
+  padding-left: clamp(12px, 4vw, 32px) !important;
+  padding-right: clamp(12px, 4vw, 32px) !important;
+}
+
+/* ── Hero ────────────────────────────────────────────────────────────────── */
 #hero {
   border-radius: 22px;
-  padding: 28px;
+  padding: clamp(18px, 4vw, 28px);
   background: linear-gradient(135deg, rgba(25,33,58,.95), rgba(63,45,83,.92));
   color: white;
 }
-#hero h1 {font-size: 2.4rem; margin-bottom: .25rem}
-#hero p {font-size: 1.05rem; opacity: .94}
+#hero h1 {
+  font-size: clamp(1.6rem, 5vw, 2.4rem);
+  margin-bottom: .25rem;
+  /* Explicit white so high-contrast mode still reads it */
+  color: #ffffff;
+}
+#hero p {
+  font-size: clamp(.95rem, 2.5vw, 1.05rem);
+  opacity: .94;
+  color: #ffffff;
+}
+
+/* ── Educational boundary warning ──────────────────────────────────────── */
 .warning-box {
   border-left: 5px solid #d97706;
   background: #fff7ed;
   color: #432818;
   padding: 14px 16px;
   border-radius: 12px;
+  /* WCAG 1.4.3: contrast ratio ≥ 4.5:1 – #432818 on #fff7ed passes AA */
 }
+
+/* ── Cards ───────────────────────────────────────────────────────────────── */
 .mode-card {
   border: 1px solid #e5e7eb;
   border-radius: 18px;
   padding: 14px;
+}
+
+/* ── Buttons: minimum 44×44 px touch target (WCAG 2.5.5) ────────────────── */
+button, .gr-button {
+  min-height: 44px !important;
+  min-width: 44px !important;
+  font-size: clamp(.9rem, 2vw, 1rem) !important;
+}
+
+/* Primary CTA — ensure visible focus ring for keyboard navigation */
+button:focus-visible, .gr-button:focus-visible {
+  outline: 3px solid #2563eb !important;
+  outline-offset: 3px !important;
+}
+
+/* ── Text inputs: readable size + sufficient contrast ────────────────────── */
+textarea, input[type="text"] {
+  font-size: clamp(.9rem, 2vw, 1rem) !important;
+  line-height: 1.6 !important;
+}
+
+/* ── Tables in Markdown outputs: horizontal scroll on narrow screens ─────── */
+.prose table, .md-block table {
+  display: block;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  max-width: 100%;
+}
+
+/* ── Mobile: stack columns on small screens ─────────────────────────────── */
+@media (max-width: 640px) {
+  .gr-row {
+    flex-direction: column !important;
+  }
+  .gr-row > * {
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+}
+
+/* ── Reduced-motion: disable decorative gradients ───────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  #hero { background: #1a2140; }
+}
+
+/* ── Dark mode ───────────────────────────────────────────────────────────── */
+@media (prefers-color-scheme: dark) {
+  .gradio-container {
+    background: #0f1117 !important;
+    color: #e8eaf0 !important;
+  }
+  .mode-card {
+    border-color: #2d3148;
+    background: #161b2e;
+  }
+  .warning-box {
+    background: #2d1f0a;
+    color: #f5d9a8;
+    border-left-color: #d97706;
+  }
+  textarea, input[type="text"], .gr-input {
+    background: #1a1f35 !important;
+    color: #e8eaf0 !important;
+    border-color: #2d3148 !important;
+  }
+  /* Keep markdown output text readable */
+  .prose, .md-block {
+    color: #e8eaf0 !important;
+  }
 }
 """
 
@@ -126,10 +224,12 @@ def explain_only(ciphertext: str) -> str:
     lines = [
         "## Evidence Notebook",
         f"- Letters analyzed: **{ev.letters}**",
-        f"- Index of coincidence: **{ev.index_of_coincidence}**",
-        f"- Entropy: **{ev.entropy}** bits/letter",
+        f"- Unique A–Z letters: **{ev.unique_letters}** / 26",
+        f"- Index of coincidence: **{ev.index_of_coincidence}** (English ≈ 0.067, random ≈ 0.038)",
+        f"- Shannon entropy: **{ev.entropy}** bits/letter",
+        f"- English chi-squared: **{ev.chi_squared}** (lower = more English-like)",
         f"- Friedman key-length estimate: **{ev.friedman_key_length or '—'}**",
-        f"- Transposition signal: **{ev.transposition_signal}** (bigram support **{ev.bigram_support}**)",
+        f"- Transposition signal: **{ev.transposition_signal}** | bigram support: **{ev.bigram_support}**",
         "",
         "### Top bigrams",
         ", ".join([f"`{bg}` ({n})" for bg, n in ev.top_bigrams]) or "Not enough text.",
@@ -140,6 +240,26 @@ def explain_only(ciphertext: str) -> str:
         "### Kasiski candidate key lengths",
         ", ".join(f"`{k}` (×{n})" for k, n in ev.kasiski_key_lengths) or "Not enough repeats.",
         "",
+        "### Best Caesar / ROT candidates",
+        "| Shift | Word clues | Chi² | Preview |",
+        "|---:|---:|---:|---|",
+    ]
+    for shift, chi, score, decoded in ev.caesar_candidates[:3]:
+        lines.append(f"| {shift} | {score} | {chi:.1f} | `{decoded[:60]}` |")
+    if ev.affine_candidates:
+        lines += [
+            "",
+            "### Best Affine candidates",
+            "| a | b | Word clues | Chi² | Preview |",
+            "|---:|---:|---:|---:|---|",
+        ]
+        for a, b, chi, score, decoded in ev.affine_candidates[:3]:
+            lines.append(f"| {a} | {b} | {score} | {chi:.1f} | `{decoded[:55]}` |")
+    lines += [
+        "",
+        "### Atbash reversal preview",
+        f"`{ev.atbash_plaintext[:80]}`",
+        "",
         "### Human reasoning",
     ]
     lines.extend(
@@ -147,6 +267,87 @@ def explain_only(ciphertext: str) -> str:
         or ["- The sample does not provide a strong single clue. Try a longer ciphertext."]
     )
     return "\n".join(lines)
+
+
+DECODE_METHODS = ["caesar_rot", "atbash", "vigenere", "affine", "auto-best-caesar", "auto-best-affine"]
+
+
+def try_decode(ciphertext: str, method: str, key_text: str) -> Tuple[str, str]:
+    """Attempt a manual decode and score the result."""
+    letters = clean_letters(ciphertext)
+    if not letters:
+        return "Paste a ciphertext first.", ""
+
+    result = ""
+    note = ""
+
+    if method == "auto-best-caesar":
+        cands = best_caesar_candidates(ciphertext, top_n=5)
+        lines = ["### Auto best-Caesar results", "| Shift | Word clues | Chi² | Plaintext |", "|---:|---:|---:|---|"]
+        for shift, chi, score, decoded in cands:
+            lines.append(f"| {shift} | {score} | {chi:.1f} | `{decoded[:70]}` |")
+        return "\n".join(lines), "_Brute-forced all 26 Caesar shifts, ranked by English-word matches then chi-squared._"
+
+    if method == "auto-best-affine":
+        cands = best_affine_candidates(ciphertext, top_n=5)
+        lines = ["### Auto best-Affine results", "| a | b | Word clues | Chi² | Plaintext |", "|---:|---:|---:|---:|---|"]
+        for a, b, chi, score, decoded in cands:
+            lines.append(f"| {a} | {b} | {score} | {chi:.1f} | `{decoded[:60]}` |")
+        return "\n".join(lines), "_Brute-forced all 312 valid Affine keys (a coprime to 26), ranked by English-word matches._"
+
+    if method == "atbash":
+        result = atbash(ciphertext)
+        note = "Atbash is its own inverse — applied once."
+
+    elif method == "caesar_rot":
+        key_clean = key_text.strip()
+        if key_clean.isdigit():
+            shift = int(key_clean) % 26
+        elif len(key_clean) == 1 and key_clean.isalpha():
+            shift = ord(key_clean.upper()) - ord("A")
+        else:
+            return "_Key must be a number 0–25 or a single letter A–Z for Caesar._", ""
+        result = caesar_shift(ciphertext, shift)
+        note = f"Caesar shift {shift} applied."
+
+    elif method == "vigenere":
+        key_clean = clean_letters(key_text)
+        if not key_clean:
+            return "_Key must contain at least one A–Z letter for Vigenère._", ""
+        try:
+            result = vigenere_decrypt(ciphertext, key_clean)
+            note = f"Vigenère decrypted with key `{key_clean}`."
+        except ValueError as exc:
+            return f"_Error: {exc}_", ""
+
+    elif method == "affine":
+        parts = [p.strip() for p in key_text.replace(",", " ").split()]
+        if len(parts) != 2 or not all(p.lstrip("-").isdigit() for p in parts):
+            return "_Affine key must be two integers: `a b` (e.g. `5 8`). a must be coprime with 26._", ""
+        a, b = int(parts[0]), int(parts[1])
+        try:
+            result = affine_decrypt(ciphertext, a, b)
+            note = f"Affine decrypted with a={a}, b={b}."
+        except ValueError as exc:
+            return f"_Error: {exc}_", ""
+
+    rletters = clean_letters(result)
+    chi = chi_squared_for_english(rletters) if rletters else float("inf")
+    ws = word_score(result)
+    ent = shannon_entropy(rletters) if rletters else 0.0
+
+    quality = "### Plaintext quality check"
+    if ws >= 3 and chi < 100:
+        quality += "\n✅ **Looks like English.** Multiple word matches and low chi-squared — this may be correct."
+    elif ws >= 1:
+        quality += "\n🟡 **Partial match.** Some English words found — check manually."
+    else:
+        quality += "\n❌ **Does not look like English.** No word matches found — try a different key."
+
+    quality += f"\n- Word matches: **{ws}**\n- Chi-squared: **{chi:.1f}**\n- Entropy: **{ent:.3f}** bits/letter"
+
+    output = f"### Decoded output\n```\n{result}\n```\n\n{quality}"
+    return output, note
 
 
 def compare_modes(ciphertext: str) -> Tuple[str, str, str]:
@@ -233,18 +434,18 @@ def make_challenge(cipher_name: str, difficulty: str) -> Tuple[str, str]:
 with gr.Blocks(css=BRAND_CSS, title="Cipher Detective AI") as demo:
     gr.HTML(
         """
-        <div id="hero">
-          <h1>🕵️‍♂️ Cipher Detective AI</h1>
+        <header id="hero" role="banner">
+          <h1>🕵️ Cipher Detective AI</h1>
           <p><strong>See the pattern. Test the hypothesis. Break the weak cipher. Respect the strong ones.</strong></p>
           <p>An educational Hugging Face Space combining transparent classical cryptanalysis with an optional Transformer classifier.</p>
-        </div>
+        </header>
         """
     )
-    gr.Markdown(
+    gr.HTML(
         """
-        <div class="warning-box">
-        <strong>Educational boundary:</strong> this tool is for classical ciphers and cryptography education.
-        It does not break modern encryption, recover passwords, bypass controls, or support unauthorized access.
+        <div class="warning-box" role="note" aria-label="Educational boundary notice">
+          <strong>Educational boundary:</strong> this tool is for classical ciphers and cryptography education.
+          It does not break modern encryption, recover passwords, bypass controls, or support unauthorized access.
         </div>
         """
     )
@@ -256,32 +457,104 @@ with gr.Blocks(css=BRAND_CSS, title="Cipher Detective AI") as demo:
                     label="Paste ciphertext",
                     lines=8,
                     placeholder="Example: WKLV LV D FDHVDU FLSKHU...",
+                    aria_label="Ciphertext input — paste your encoded text here",
                 )
-                analyze_btn = gr.Button("Analyze like a detective", variant="primary")
-                gr.Examples(examples=EXAMPLES, inputs=[ciphertext])
+                analyze_btn = gr.Button(
+                    "Analyze like a detective",
+                    variant="primary",
+                    elem_id="analyze-btn",
+                )
+                gr.Examples(
+                    examples=EXAMPLES,
+                    inputs=[ciphertext],
+                    label="Try an example",
+                )
             with gr.Column(scale=1):
-                scores = gr.Markdown(label="Scores")
-        report = gr.Markdown(label="Detective report")
+                scores = gr.Markdown(label="Confidence scores", show_label=True)
+        report = gr.Markdown(label="Detective report", show_label=True)
+        # Accept Enter key from the textbox and the click button.
+        ciphertext.submit(detective_mode, inputs=[ciphertext], outputs=[report, scores])
         analyze_btn.click(detective_mode, inputs=[ciphertext], outputs=[report, scores])
 
     with gr.Tab("Explain Mode"):
-        explain_input = gr.Textbox(label="Ciphertext", lines=7)
-        explain_btn = gr.Button("Show evidence notebook")
-        explain_out = gr.Markdown()
+        explain_input = gr.Textbox(
+            label="Ciphertext",
+            lines=7,
+            placeholder="Paste any ciphertext to examine the evidence...",
+            aria_label="Ciphertext to analyze for cryptanalytic evidence",
+        )
+        explain_btn = gr.Button("Show evidence notebook", elem_id="explain-btn")
+        explain_out = gr.Markdown(label="Evidence notebook", show_label=True)
+        explain_input.submit(explain_only, inputs=[explain_input], outputs=[explain_out])
         explain_btn.click(explain_only, inputs=[explain_input], outputs=[explain_out])
 
     with gr.Tab("Challenge Mode"):
+        gr.Markdown(
+            "Generate an encrypted challenge and try to identify the cipher before revealing the answer.",
+            elem_id="challenge-intro",
+        )
         with gr.Row():
             cipher_choice = gr.Dropdown(
                 ["random", "caesar_rot", "atbash", "vigenere", "rail_fence", "columnar", "affine", "substitution"],
                 value="random",
                 label="Challenge type",
+                aria_label="Select cipher type to challenge",
             )
-            difficulty = gr.Dropdown(["easy", "medium", "hard"], value="medium", label="Difficulty")
-        challenge_btn = gr.Button("Generate challenge")
-        challenge_text = gr.Textbox(label="Ciphertext challenge", lines=5)
-        answer = gr.Textbox(label="Reveal answer", lines=3)
+            difficulty = gr.Dropdown(
+                ["easy", "medium", "hard"],
+                value="medium",
+                label="Difficulty",
+                aria_label="Select difficulty level",
+            )
+        challenge_btn = gr.Button("Generate challenge", variant="primary", elem_id="challenge-btn")
+        challenge_text = gr.Textbox(
+            label="Ciphertext challenge",
+            lines=5,
+            interactive=False,
+            aria_label="Generated ciphertext challenge — try to identify the cipher",
+        )
+        answer = gr.Textbox(
+            label="Reveal answer",
+            lines=3,
+            interactive=False,
+            aria_label="Answer revealed after you have attempted the challenge",
+        )
         challenge_btn.click(make_challenge, inputs=[cipher_choice, difficulty], outputs=[challenge_text, answer])
+
+    with gr.Tab("Try Decode"):
+        gr.Markdown(
+            "Apply a specific cipher reversal with your guessed key, then see an automatic "
+            "quality check. Use **auto-best-caesar** or **auto-best-affine** to brute-force "
+            "without knowing the key."
+        )
+        with gr.Row():
+            with gr.Column(scale=2):
+                decode_input = gr.Textbox(
+                    label="Ciphertext",
+                    lines=7,
+                    placeholder="Paste ciphertext to attempt decoding...",
+                    aria_label="Ciphertext to attempt manual decoding",
+                )
+            with gr.Column(scale=1):
+                decode_method = gr.Dropdown(
+                    DECODE_METHODS,
+                    value="auto-best-caesar",
+                    label="Decryption method",
+                    aria_label="Select decryption method to apply",
+                )
+                decode_key = gr.Textbox(
+                    label="Key (where required)",
+                    placeholder="Caesar: shift 0–25 or letter | Vigenère: word | Affine: a b",
+                    lines=1,
+                    aria_label=(
+                        "Key for decryption: a number for Caesar, a word for Vigenère, "
+                        "two numbers (a b) for Affine; leave blank for auto or Atbash"
+                    ),
+                )
+                decode_btn = gr.Button("Decode", variant="primary", elem_id="decode-btn")
+        decode_out = gr.Markdown(label="Decoded result + quality check", show_label=True)
+        decode_note = gr.Markdown(label="Method note", show_label=True)
+        decode_btn.click(try_decode, inputs=[decode_input, decode_method, decode_key], outputs=[decode_out, decode_note])
 
     with gr.Tab("Compare Mode"):
         gr.Markdown(
@@ -289,17 +562,19 @@ with gr.Blocks(css=BRAND_CSS, title="Cipher Detective AI") as demo:
             "on the same ciphertext. Disagreements are highlighted — they're often the most "
             "educational examples."
         )
-        compare_input = gr.Textbox(label="Ciphertext", lines=7)
-        compare_btn = gr.Button("Compare methods", variant="primary")
-        with gr.Row():
-            heur_out = gr.Markdown(label="Heuristic baseline")
-            ml_out = gr.Markdown(label="Transformer classifier")
-        agreement_out = gr.Markdown()
-        compare_btn.click(
-            compare_modes,
-            inputs=[compare_input],
-            outputs=[heur_out, ml_out, agreement_out],
+        compare_input = gr.Textbox(
+            label="Ciphertext",
+            lines=7,
+            placeholder="Paste ciphertext to compare methods...",
+            aria_label="Ciphertext to compare heuristic and transformer predictions",
         )
+        compare_btn = gr.Button("Compare methods", variant="primary", elem_id="compare-btn")
+        with gr.Row():
+            heur_out = gr.Markdown(label="Heuristic baseline", show_label=True)
+            ml_out = gr.Markdown(label="Transformer classifier", show_label=True)
+        agreement_out = gr.Markdown(label="Agreement summary", show_label=True)
+        compare_input.submit(compare_modes, inputs=[compare_input], outputs=[heur_out, ml_out, agreement_out])
+        compare_btn.click(compare_modes, inputs=[compare_input], outputs=[heur_out, ml_out, agreement_out])
 
     with gr.Tab("About / Model Status"):
         gr.Markdown(
@@ -314,10 +589,12 @@ with gr.Blocks(css=BRAND_CSS, title="Cipher Detective AI") as demo:
 
             ### Current model status
 
-            - Transformer loaded: **{MODEL is not None}**
-            - Model source: `{os.getenv("CIPHER_MODEL_ID", "cipher_model")}`
-            - Fallback available: **true**
-            - Last model loading error: `{MODEL_ERROR or "none"}`
+            | Property | Value |
+            |---|---|
+            | Transformer loaded | **{MODEL is not None}** |
+            | Model source | `{os.getenv("CIPHER_MODEL_ID", "cipher_model")}` |
+            | Heuristic fallback | **always available** |
+            | Last loading error | `{MODEL_ERROR or "none"}` |
 
             ### Why this matters
 
