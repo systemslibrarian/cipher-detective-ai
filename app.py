@@ -596,6 +596,20 @@ with gr.Blocks(title="Cipher Detective AI", css=BRAND_CSS) as demo:
             "quality check. Use **auto-best-caesar** or **auto-best-affine** to brute-force "
             "without knowing the key."
         )
+        gr.HTML("""
+<div class="warning-box">
+<strong>⚠️ What this tool can and cannot do</strong><br><br>
+<strong>Can decode (math is fully reversible with the right key):</strong>
+Caesar / ROT-N &nbsp;·&nbsp; ROT-13 &nbsp;·&nbsp; Atbash &nbsp;·&nbsp; Affine &nbsp;·&nbsp; Vigenère &nbsp;·&nbsp; Beaufort<br><br>
+<strong>Cannot decode — the Detect tab identifies these, but cracking them requires:</strong><br>
+&nbsp;• <em>Enigma / Lorenz / Typex / SIGABA / M209 / KL-7</em> — rotor settings &amp; plugboard state; keyspace is astronomical without cribs<br>
+&nbsp;• <em>Playfair / Bifid / Four-square / Hill / Two-square</em> — key square brute-force is a 25! search space (needs a full hill-climber beyond scope here)<br>
+&nbsp;• <em>Book cipher / Running key / Null cipher</em> — require the physical book or cover text<br>
+&nbsp;• <em>Polybius / Tap / Morse / ADFGVX / Bacon</em> — format-conversion ciphers; deterministic once you know the grid, but not reversible from raw A–Z letters alone<br>
+&nbsp;• <em>Navajo code / Copiale / Voynich</em> — language or symbol systems, not mathematical substitutions<br><br>
+The classifier can tell you <em>which family</em> your ciphertext belongs to. Reversing it is a separate — often much harder — problem.
+</div>
+""")
         with gr.Row():
             with gr.Column(scale=2):
                 decode_input = gr.Textbox(
