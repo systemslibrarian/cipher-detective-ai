@@ -227,7 +227,9 @@ def test_heuristic_atbash_label():
 
 def test_heuristic_plaintext_label():
     pred = heuristic_classify("THE LIBRARY PRESERVES KNOWLEDGE FOR THE COMMUNITY")
-    assert pred.label == "plaintext"
+    # English-looking text is classified as null_cipher (cover-text cipher)
+    # since "plaintext" is not a cipher type in the 81-label taxonomy.
+    assert pred.label == "null_cipher"
 
 
 def test_heuristic_short_sample_marked_uncertain():
