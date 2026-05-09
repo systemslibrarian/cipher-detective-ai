@@ -2,7 +2,7 @@
 title: Cipher Detective AI
 emoji: 🕵️‍♂️
 colorFrom: indigo
-colorTo: amber
+colorTo: yellow
 sdk: gradio
 sdk_version: 4.44.0
 app_file: app.py
