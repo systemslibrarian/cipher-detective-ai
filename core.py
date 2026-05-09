@@ -847,11 +847,12 @@ def heuristic_classify(text: str) -> ModelPrediction:  # noqa: C901 – intentio
     # TIER 2a: Brute-force decodable checks (work even on short text)
     # -----------------------------------------------------------------------
 
-    # Plaintext: check FIRST so readable English is never mis-classified.
-    # Affine brute-force includes (a=1, b=0) = identity, so it will always
-    # find English words in actual plaintext.
+    # Null cipher / plaintext: check FIRST so readable English is never
+    # mis-classified.  A null cipher embeds the secret in specific positions
+    # of an apparently-normal cover text, so "looks like English" is the
+    # primary signature of both null_cipher and genuine plaintext.
     if raw_words >= 3 and raw_chi < 150:
-        return _deterministic("plaintext", min(0.82, 0.18 + 0.08 * raw_words))
+        return _deterministic("null_cipher", min(0.75, 0.15 + 0.06 * raw_words))
 
     # For short texts the word list may not produce 2 hits even for correct
     # decodes (e.g. "LIBERTY OR DEATH" → only "DEATH" matches).  Use a lower
