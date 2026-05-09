@@ -646,11 +646,19 @@ def heuristic_classify(text: str) -> ModelPrediction:  # noqa: C901 – intentio
     # TIER 1b: Numeric / coded formats
     # -----------------------------------------------------------------------
 
-    # Arnold-André: "page.line.word" triples, e.g. "4.2.4 13.1.1"
+    # Arnold-André / book_cipher triple format: "page.line.word"
+    # Distinguish by line number: Arnold-André uses a small book (~6 lines/page),
+    # book_cipher uses larger books (up to 50 lines/page).
     if re.match(r"^(\d+\.\d+\.\d+\s*)+$", stripped):
+        triples = re.findall(r"(\d+)\.(\d+)\.(\d+)", stripped)
+        if triples:
+            max_line = max(int(t[1]) for t in triples)
+            if max_line <= 8:
+                return _deterministic("arnold_andre", 0.88)
+            return _deterministic("book_cipher", 0.85)
         return _deterministic("arnold_andre", 0.89)
 
-    # Book cipher: mixed "page.word" or "page:line:word" with periods
+    # Book cipher: mixed "page.word" two-part codes, optionally mixed with bare integers
     if re.search(r"\d+\.\d+", stripped) and re.search(r"\d", stripped):
         tokens = stripped.split()
         if all(re.match(r"^\d+[.\d]*$", t) for t in tokens if t):
