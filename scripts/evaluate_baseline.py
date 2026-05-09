@@ -89,6 +89,11 @@ def main():
     ap.add_argument("--data", default="data/cipher_examples.jsonl")
     ap.add_argument("--out", default="reports/baseline_metrics.json")
     ap.add_argument(
+        "--sample", type=int, default=None,
+        help="Randomly sample this many rows (stratified per label) for a quick evaluation.",
+    )
+    ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument(
         "--model",
         default=os.getenv("CIPHER_MODEL_ID", ""),
         help="Optional Hugging Face model ID or local path. If set, results are reported alongside the heuristic.",
@@ -96,6 +101,23 @@ def main():
     args = ap.parse_args()
 
     rows = list(load_rows(args.data))
+
+    if args.sample and args.sample < len(rows):
+        import random as _random
+        _random.seed(args.seed)
+        # Stratified sample: take proportional count from each label
+        from collections import defaultdict as _dd
+        by_label: dict = _dd(list)
+        for r in rows:
+            by_label[r["label"]].append(r)
+        sampled: list = []
+        per_label = max(1, args.sample // len(by_label))
+        for lbl_rows in by_label.values():
+            k = min(per_label, len(lbl_rows))
+            sampled.extend(_random.sample(lbl_rows, k))
+        rows = sampled
+        print(f"Sampled {len(rows)} rows ({per_label} per label, {len(by_label)} labels)")
+
     texts = [r["text"] for r in rows]
     y_true = [r["label"] for r in rows]
     labels = sorted(set(y_true))
