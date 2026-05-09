@@ -26,11 +26,11 @@ Cipher Detective AI is an **educational** classical-cryptanalysis exhibit. It te
 
 It is built as a Hugging Face-native triple:
 
-| Artifact | Suggested repo                                              | Role                                         |
+| Artifact | Repo                                              | Role                                         |
 |----------|-------------------------------------------------------------|----------------------------------------------|
-| Space    | `systemslibrarian/cipher-detective-ai`                      | Live interactive exhibit (this app)          |
-| Dataset  | `systemslibrarian/classical-cipher-corpus`                  | Labeled classical-cipher examples            |
-| Model    | `systemslibrarian/cipher-detective-classifier`              | Small Transformer classifier                 |
+| Space    | [systemslibrarian/cipher-detective-ai](https://huggingface.co/spaces/systemslibrarian/cipher-detective-ai) | Live interactive exhibit (this app) |
+| Dataset  | [systemslibrarian/classical-cipher-corpus](https://huggingface.co/datasets/systemslibrarian/classical-cipher-corpus) | Labeled classical-cipher examples |
+| Model    | [systemslibrarian/cipher-detective-classifier](https://huggingface.co/systemslibrarian/cipher-detective-classifier) | Small Transformer classifier |
 
 **This is not an offensive tool.** It does not break modern encryption, recover passwords, or bypass access controls. See [`docs/educational-boundary.md`](docs/educational-boundary.md).
 

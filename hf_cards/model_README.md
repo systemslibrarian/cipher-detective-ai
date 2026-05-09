@@ -18,6 +18,11 @@ metrics:
 
 A Transformer-based educational classifier for identifying broad classical-cipher families from ciphertext-like text.
 
+**Part of the Cipher Detective AI project:**
+- 🕵️ Space: [systemslibrarian/cipher-detective-ai](https://huggingface.co/spaces/systemslibrarian/cipher-detective-ai)
+- 📦 Dataset: [systemslibrarian/classical-cipher-corpus](https://huggingface.co/datasets/systemslibrarian/classical-cipher-corpus)
+- 🤖 Model: [systemslibrarian/cipher-detective-classifier](https://huggingface.co/systemslibrarian/cipher-detective-classifier) _(this repo)_
+
 ## Intended use
 
 This model supports the **Cipher Detective AI** Hugging Face Space. It is intended for:
