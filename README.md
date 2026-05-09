@@ -12,17 +12,25 @@ tags:
   - cryptography
   - cryptanalysis
   - classical-ciphers
+  - cipher
   - transformers
   - text-classification
   - cybersecurity-education
   - gradio
+  - nlp
+  - machine-learning
+  - python
+  - substitution-cipher
+  - vigenere
+  - caesar-cipher
+  - educational
 ---
 
 # 🕵️‍♂️ Cipher Detective AI
 
 > **See the pattern. Test the hypothesis. Break the weak cipher. Respect the strong ones.**
 
-Cipher Detective AI is an **educational** classical-cryptanalysis exhibit. It teaches how weak historical ciphers leak patterns, how cryptanalysis actually works, and **why modern cryptography is fundamentally different.**
+Cipher Detective AI is an **educational** classical-cryptanalysis exhibit. It detects and decodes **81 historical cipher types** — from Caesar and Vigenère to Rail-Fence, Columnar, Playfair, and more — using a transparent heuristic engine and an optional fine-tuned Transformer classifier. It teaches how weak historical ciphers leak patterns, how cryptanalysis actually works, and **why modern cryptography is fundamentally different.**
 
 It is built as a Hugging Face-native triple:
 
@@ -46,14 +54,17 @@ It is built as a Hugging Face-native triple:
 
 ## 🧭 Modes
 
-The Gradio Space ships with **six** modes:
+The Gradio Space ships with **seven** tabs:
 
-1. **Detect Mode** — paste ciphertext, get a classification, confidence, and a full evidence report (frequency, IoC, entropy, Caesar/Affine candidates, Kasiski/Friedman indicators, transposition signal). One-click random examples.
-2. **Explain Mode** — see the raw "evidence notebook" without a verdict — useful for teaching.
-3. **Challenge Mode** — generate practice ciphertexts (Caesar, Atbash, Vigenère, Rail-Fence, Columnar, Affine, Substitution) at chosen difficulty.
-4. **Try Decode** — apply a specific reversal with a guessed key, plus auto-brute-force for Caesar and Affine, with an automatic English-quality check.
+1. **Detect** — paste ciphertext, get a classification, confidence, and a full evidence report (frequency, IoC, entropy, Caesar/Affine candidates, Kasiski/Friedman indicators, transposition signal). One-click random examples.
+2. **Evidence Notebook** — see the raw evidence without a verdict — useful for teaching step-by-step cryptanalysis.
+3. **Challenge** — generate practice ciphertexts (Caesar, Atbash, Vigenère, Rail-Fence, Columnar, Affine, Substitution) at chosen difficulty.
+4. **Try Decode** — ten decryption methods with automatic English-quality scoring:
+   - *Auto modes (no key needed):* auto-best-Caesar, auto-best-Affine, auto-Vigenère (Kasiski + Friedman), auto-rail-fence (brute-force rails 2–15)
+   - *Keyed modes:* Caesar/ROT, Atbash, Vigenère, Beaufort, Affine, Columnar transposition
 5. **Compare Mode** — run the **transparent heuristic baseline** and the **Transformer classifier** side-by-side, with disagreement analysis.
-6. **Solve Substitution** — hill-climbing solver for monoalphabetic substitution using English bigram log-probabilities. Educational only — converges on ~120+ letters of English; short or non-English samples fail by design.
+6. **Solve Substitution** — hill-climbing solver for monoalphabetic substitution using a blended bigram + trigram log-probability score. Educational only — converges on ~120+ letters of English.
+7. **About** — project background, educational boundaries, and links.
 
 ---
 
@@ -157,7 +168,11 @@ Report includes accuracy, macro F1, per-class precision/recall/F1, confusion mat
 
 ## 🏷️ Labels
 
-`plaintext`, `caesar_rot`, `atbash`, `vigenere`, `rail_fence`, `columnar`, `affine`, `substitution`.
+The classifier covers **81 cipher classes**, including:
+
+`plaintext`, `caesar_rot`, `atbash`, `vigenere`, `beaufort`, `rail_fence`, `columnar`, `affine`, `substitution`, `playfair`, `four_square`, `two_square`, `hill_cipher`, `bifid`, `trifid`, `adfgx`, `adfgvx`, `enigma`, `lorenz`, `morse_code`, `tap_code`, `navajo_code`, `pigpen`, `baconian`, `polybius`, `straddling_checkerboard`, `chaocipher`, `nihilist`, `porta`, `rot13`, `rot47`, `gronsfeld`, `running_key`, `autokey`, `one_time_pad`, `venona_pad_reuse`, `voynich`, `babington`, and more.
+
+See [`data/cipher_examples.jsonl`](data/cipher_examples.jsonl) for the full label distribution.
 
 ---
 
@@ -168,6 +183,11 @@ Report includes accuracy, macro F1, per-class precision/recall/F1, confusion mat
 - [ ] Add `screenshots/` images.
 - [x] Hill-climbing solver demo for monoalphabetic substitution (educational only).
 - [x] Per-length and per-difficulty evaluation buckets.
+- [x] Vigenère auto-solver (Kasiski + Friedman key-length estimation).
+- [x] Rail-fence and columnar transposition decoders.
+- [x] Beaufort cipher support (encrypt + decrypt).
+- [x] Bigram + trigram blended scoring for hill climber.
+- [x] GitHub Actions → Hugging Face Space auto-sync on every push.
 - [ ] Calibration plot (heuristic confidence vs accuracy).
 - [ ] Multilingual plaintext sources (clearly labeled).
 - [ ] Linked exhibit pages from Cipher Museum / Crypto Lab.
