@@ -498,7 +498,7 @@ def make_challenge(cipher_name: str, difficulty: str) -> Tuple[str, str]:
     return plain, f"Answer: Plaintext. Plaintext: {plain}"
 
 
-with gr.Blocks(title="Cipher Detective AI") as demo:
+with gr.Blocks(title="Cipher Detective AI", css=BRAND_CSS) as demo:
     gr.HTML(
         """
         <header id="hero" role="banner">
@@ -708,4 +708,4 @@ with gr.Blocks(title="Cipher Detective AI") as demo:
         )
 
 if __name__ == "__main__":
-    demo.launch(css=BRAND_CSS)
+    demo.launch()

@@ -795,8 +795,8 @@ def heuristic_classify(text: str) -> ModelPrediction:  # noqa: C901 – intentio
     # -----------------------------------------------------------------------
     # TIER 2: Statistical analysis for pure alphabetic text
     # -----------------------------------------------------------------------
-    if len(letters) < 20:
-        return ModelPrediction("too_short", 0.20, {"too_short": 0.20}, "heuristic")
+    # Always compute enough for brute-force checks (work on short text too).
+    n_letters = len(letters)
 
     ev = analyze_evidence(text)
     ioc = ev.index_of_coincidence
@@ -807,21 +807,18 @@ def heuristic_classify(text: str) -> ModelPrediction:  # noqa: C901 – intentio
     raw_chi = chi_squared_for_english(letters)
     fried = ev.friedman_key_length
     kas_support = sum(n for _, n in ev.kasiski_key_lengths[:3])
-    n_letters = len(letters)
+    transp = ev.transposition_signal
+    bgm = ev.bigram_support
 
     # -----------------------------------------------------------------------
-    # Build a fresh score dict and apply tiered statistical signals.
-    # The strategy: detect the IoC-based cipher FAMILY first, then apply
-    # brute-force / structural disambiguation within that family.
+    # TIER 2a: Brute-force decodable checks (work even on short text)
     # -----------------------------------------------------------------------
 
-    # --- Plaintext: check FIRST so readable English is never mis-classified ---
-    # Affine brute-force includes (a=1, b=0) which is the identity, so it will
-    # always find English words in actual plaintext — plaintext must fire first.
+    # Plaintext: check FIRST so readable English is never mis-classified.
+    # Affine brute-force includes (a=1, b=0) = identity, so it will always
+    # find English words in actual plaintext.
     if raw_words >= 3 and raw_chi < 150:
         return _deterministic("plaintext", min(0.82, 0.18 + 0.08 * raw_words))
-
-    # --- Brute-force decodable monoalphabetic signals (fast, high confidence) ---
 
     # Atbash: one-step decode
     if atbash_words >= 2:
@@ -834,20 +831,21 @@ def heuristic_classify(text: str) -> ModelPrediction:  # noqa: C901 – intentio
     # Caesar / ROT-N: any non-zero shift that produces English
     if best_words >= 2 and best_shift != 0:
         conf = min(0.82, 0.22 + 0.08 * best_words)
-        # Affine: only promote if it's strictly better than Caesar
         if affine_words >= best_words + 2:
             return _deterministic("affine", min(0.78, 0.20 + 0.07 * affine_words))
         return _deterministic("caesar", conf)
 
-    # Affine (even if caesar has 0-1 words, try affine if it finds English)
+    # Affine (even if Caesar has 0-1 words)
     if affine_words >= 3:
         return _deterministic("affine", min(0.75, 0.18 + 0.07 * affine_words))
 
+    # Now gate on length: IoC-based routing needs sufficient text
+    if n_letters < 20:
+        return ModelPrediction("too_short", 0.20, {"too_short": 0.20}, "heuristic")
+
     # -----------------------------------------------------------------------
-    # At this point no simple decode worked. Use IoC-based family routing.
+    # TIER 2b: IoC-based family routing (requires ≥ 20 letters)
     # -----------------------------------------------------------------------
-    transp = ev.transposition_signal
-    bgm = ev.bigram_support
 
     # --- Transposition: English IoC + disrupted bigrams ---------------------
     if transp >= 0.50 and bgm <= 0.40 and ioc >= 0.055:
@@ -867,7 +865,7 @@ def heuristic_classify(text: str) -> ModelPrediction:  # noqa: C901 – intentio
             if transp >= 0.35 and bgm <= 0.50:
                 return _deterministic("columnar_transposition", 0.38)
             return _deterministic("monoalphabetic", 0.38)
-        # IoC ≥ 0.068 — very high, unusual; scytale/stager_route have high IoC
+        # IoC ≥ 0.068 — very high; scytale/stager_route have high IoC
         if ioc >= 0.070:
             if transp >= 0.40:
                 return _deterministic("scytale", 0.38)
@@ -875,21 +873,19 @@ def heuristic_classify(text: str) -> ModelPrediction:  # noqa: C901 – intentio
 
     # --- Medium IoC (0.046–0.058): polygraphic / Playfair family -----------
     if 0.046 <= ioc < 0.058:
-        # Fractionated Morse: constrained letter set + medium IoC
-        frac_morse_letters = {
-            "A", "D", "F", "G", "H", "I", "L", "M", "N", "O", "R", "S", "T", "U", "W"
-        }
-        if letter_set <= frac_morse_letters:
-            return _deterministic("fractionated_morse", 0.52)
-        # Gronsfeld: uses digit-based repeating key → low IoC similar to Vigenère
+        # Porta cipher: IoC typically 0.049-0.055, key length 2-13
+        # (reciprocal alphabets pairs → distinctive Kasiski pattern)
+        if 0.049 <= ioc < 0.055 and 2 <= fried <= 13 and kas_support >= 2:
+            return _deterministic("porta", 0.30)
         if 0.049 <= ioc < 0.058:
-            return _deterministic("gronsfeld", 0.30) if (2 <= fried <= 8) else _deterministic("playfair", 0.32)
+            # Gronsfeld uses digit key (0-9) → short key length, Kasiski support
+            if 2 <= fried <= 8 and kas_support >= 2:
+                return _deterministic("gronsfeld", 0.30)
+            return _deterministic("playfair", 0.32)
         return _deterministic("playfair", 0.35)
 
-    # --- Low-to-medium IoC (0.040–0.046): polyalphabetic & some machine ----
+    # --- Low-to-medium IoC (0.040–0.046): polyalphabetic & machine ---------
     if 0.040 <= ioc < 0.046:
-        # Friedman key-length estimate distinguishes repeating-key ciphers
-        # from one-time / aperiodic stream ciphers.
         if 2 <= fried <= 12:
             if kas_support >= 3:
                 return _deterministic("vigenere", 0.42)
@@ -897,7 +893,6 @@ def heuristic_classify(text: str) -> ModelPrediction:  # noqa: C901 – intentio
         return _deterministic("beaufort", 0.28)
 
     # --- Very low IoC (< 0.040): machine ciphers / OTP / strong stream -----
-    # enigma is the most common label in this IoC band (1 887 examples).
     if ioc < 0.040:
         return _deterministic("enigma", 0.25)
 
