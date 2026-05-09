@@ -34,6 +34,27 @@ ATTACKS: Dict[str, List[str]] = {
     "scytale":               ["column_count_search", "anagram_recovery"],
     "double_transposition":  ["key_length_search", "anagram_recovery"],
     "stager_route":          ["column_count_search", "route_pattern_search"],
+    # new sparse-label entries
+    "aeneas_tacticus":       ["sequential_number_decode", "frequency_analysis"],
+    "arnold_andre":          ["book_cipher_attack", "triple_index_search"],
+    "babington":             ["nomenclator_frequency", "symbol_mapping"],
+    "bacon_cipher":          ["five_bit_decode", "ab_frequency_analysis"],
+    "book_cipher":           ["book_cipher_attack", "triple_index_search"],
+    "commercial_code":       ["codebook_frequency", "five_letter_group_analysis"],
+    "culper_ring":           ["codebook_frequency", "number_range_analysis"],
+    "homophonic":            ["frequency_analysis", "multiple_ciphertext_attack"],
+    "morse_code":            ["symbol_decode", "frequency_analysis"],
+    "navajo_code":           ["codebook_frequency", "word_list_attack"],
+    "null_cipher":           ["acrostic_detection", "first_letter_extraction"],
+    "one_time_pad":          ["information_theoretic_proof", "key_reuse_attack"],
+    "pigpen":                ["symbol_frequency", "grid_position_decode"],
+    "polybius":              ["pair_decode", "frequency_analysis"],
+    "running_key":           ["index_of_coincidence", "probable_plaintext"],
+    "tap_code":              ["dot_count_decode", "grid_position_search"],
+    "vernam":                ["key_reuse_attack", "information_theoretic_proof"],
+    "voynich_render":        ["statistical_analysis", "unsolved"],
+    "wallis_cipher":         ["number_substitution_decode", "frequency_analysis"],
+    "zimmermann":            ["codebook_frequency", "number_group_analysis"],
 }
 
 EDU_NOTES: Dict[str, str] = {
@@ -57,6 +78,27 @@ EDU_NOTES: Dict[str, str] = {
     "scytale":               "Scytale: Spartan cylinder cipher — wrap text around a rod of fixed diameter.",
     "double_transposition":  "Double columnar transposition: apply columnar twice for stronger security.",
     "stager_route":          "Route (Stager) cipher: write into rectangle, read via alternating column route.",
+    # new sparse-label entries
+    "aeneas_tacticus":       "Aeneas Tacticus: Greek sequential-number cipher; A=1…Z=26.",
+    "arnold_andre":          "Arnold-André book cipher: coordinates (page.section.word) referencing a shared text.",
+    "babington":             "Babington nomenclator: symbol tokens ⟨wNN⟩/⟨aNN⟩ used in the 1586 Babington Plot.",
+    "bacon_cipher":          "Bacon's biliteral cipher: each letter encoded as 5-bit A/B string.",
+    "book_cipher":           "Book cipher: coordinates (page.line.word) referencing a shared document.",
+    "commercial_code":       "Commercial code: five-letter groups from a codebook, often ending in X or Z.",
+    "culper_ring":           "Culper Ring code: Washington's three-digit codebook numbers (800–999 range).",
+    "homophonic":            "Homophonic substitution: each letter maps to multiple possible numbers.",
+    "morse_code":            "Morse code: dots and dashes; word-separated by / symbol.",
+    "navajo_code":           "Navajo Code Talker cipher: Navajo words represent English letters.",
+    "null_cipher":           "Null/steganographic cipher: hidden message formed by first letters of words.",
+    "one_time_pad":          "One-time pad: theoretically unbreakable if key is truly random and never reused.",
+    "pigpen":                "Pigpen cipher: letters encoded as positions in tic-tac-toe and X grids.",
+    "polybius":              "Polybius square: 5×5 grid maps letters to two-digit row-column pairs.",
+    "running_key":           "Running-key cipher: Vigenère with a very long key (e.g. a book passage).",
+    "tap_code":              "Tap code: letters encoded as dot-groups representing row and column in 5×5 grid.",
+    "vernam":                "Vernam cipher: XOR-based stream cipher; with a random key equivalent to OTP.",
+    "voynich_render":        "Voynich manuscript: undeciphered 15th-century script; pseudo-syllabic output.",
+    "wallis_cipher":         "Wallis cipher: each letter mapped to a unique two-digit number from a fixed table.",
+    "zimmermann":            "Zimmermann Telegram code: WWI German diplomatic numeric codebook cipher.",
 }
 
 # ---------------------------------------------------------------------------
@@ -331,6 +373,266 @@ def substitution(text: str, alphabet: str) -> str:
     return text.upper().translate(trans)
 
 
+# ---------------------------------------------------------------------------
+# Sparse-label cipher encoders (museum-only classes → synthetic generation)
+# ---------------------------------------------------------------------------
+
+# Bacon biliteral cipher: each letter → 5-bit A/B string
+_BACON = {
+    'A': 'AAAAA', 'B': 'AAAAB', 'C': 'AAABA', 'D': 'AAABB', 'E': 'AABAA',
+    'F': 'AABAB', 'G': 'AABBA', 'H': 'AABBB', 'I': 'ABAAA', 'J': 'ABAAA',
+    'K': 'ABAAB', 'L': 'ABABA', 'M': 'ABABB', 'N': 'ABBAA', 'O': 'ABBAB',
+    'P': 'ABBBA', 'Q': 'ABBBB', 'R': 'BAAAA', 'S': 'BAAAB', 'T': 'BAABA',
+    'U': 'BAABB', 'V': 'BAABB', 'W': 'BABAA', 'X': 'BABAB', 'Y': 'BABBA',
+    'Z': 'BABBB',
+}
+
+def bacon_cipher_encode(text: str) -> str:
+    return " ".join(_BACON.get(c, 'AAAAA') for c in clean(text))
+
+
+# Polybius square: 5×5 grid (I=J), letters → row-col digit pair
+_POLYBIUS_GRID: Dict[str, str] = {}
+_p_idx = 0
+for _ch in "ABCDEFGHIKLMNOPQRSTUVWXYZ":   # no J
+    _POLYBIUS_GRID[_ch] = f"{_p_idx // 5 + 1}{_p_idx % 5 + 1}"
+    _p_idx += 1
+_POLYBIUS_GRID['J'] = _POLYBIUS_GRID['I']
+
+def polybius_encode(text: str) -> str:
+    return " ".join(_POLYBIUS_GRID.get(c, '11') for c in clean(text))
+
+
+# Morse code: dots and dashes, word-separated by " / "
+_MORSE: Dict[str, str] = {
+    'A': '.-',   'B': '-...', 'C': '-.-.',  'D': '-..',  'E': '.',
+    'F': '..-.',  'G': '--.',  'H': '....', 'I': '..',   'J': '.---',
+    'K': '-.-',  'L': '.-..',  'M': '--',   'N': '-.',   'O': '---',
+    'P': '.--.',  'Q': '--.-', 'R': '.-.',  'S': '...',  'T': '-',
+    'U': '..-',  'V': '...-', 'W': '.--',  'X': '-..-', 'Y': '-.--',
+    'Z': '--..',
+}
+
+def morse_encode(text: str) -> str:
+    words = [re.sub(r'[^A-Z]', '', w) for w in text.upper().split()]
+    return " / ".join(
+        " ".join(_MORSE[c] for c in w if c in _MORSE)
+        for w in words if w
+    )
+
+
+# Tap code: letters as row.col dot-groups separated by double-space
+# 5×5 grid, K → C (no K row)
+_TAP: Dict[str, tuple] = {}
+_t_idx = 0
+for _ch in "ABCDEFGHIJLMNOPQRSTUVWXYZ":   # no K
+    _TAP[_ch] = (_t_idx // 5 + 1, _t_idx % 5 + 1)
+    _t_idx += 1
+_TAP['K'] = _TAP['C']
+
+def tap_code_encode(text: str) -> str:
+    parts = []
+    for c in clean(text):
+        row, col = _TAP.get(c, (1, 1))
+        parts.append('.' * row + ' ' + '.' * col)
+    return '  '.join(parts)
+
+
+# Aeneas Tacticus: A=1 … Z=26 (space-separated integers)
+def aeneas_tacticus_encode(text: str) -> str:
+    return " ".join(str(ALPHABET.index(c) + 1) for c in clean(text))
+
+
+# Wallis cipher: fixed shuffled 2-digit mapping (seeded for reproducibility)
+_wallis_nums = list(range(10, 100))
+random.Random(42).shuffle(_wallis_nums)
+_WALLIS_MAP: Dict[str, str] = {c: str(_wallis_nums[i]) for i, c in enumerate(ALPHABET)}
+
+def wallis_cipher_encode(text: str) -> str:
+    return " ".join(_WALLIS_MAP[c] for c in clean(text))
+
+
+# Homophonic substitution: common letters have multiple numeric homophones
+_HOMO_TABLE: Dict[str, List[int]] = {}
+_homo_pool = list(range(1, 100))
+random.Random(7).shuffle(_homo_pool)
+_homo_idx_ = 0
+for _rank, _c in enumerate("ETAOINSHRDLCUMWFGYPBVKJXQZ"):
+    _n = max(1, 4 - _rank // 6)   # E→4 homophones, Z→1
+    _HOMO_TABLE[_c] = _homo_pool[_homo_idx_: _homo_idx_ + _n]
+    _homo_idx_ = min(_homo_idx_ + _n, 98)
+
+def homophonic_encode(text: str) -> str:
+    return " ".join(str(random.choice(_HOMO_TABLE.get(c, [1]))) for c in clean(text))
+
+
+# Culper Ring: ~3-digit numbers (800–998), 999 = word separator
+def culper_ring_encode(text: str) -> str:
+    groups: List[str] = []
+    for word in text.upper().split():
+        letters = re.sub(r'[^A-Z]', '', word)
+        if not letters:
+            continue
+        for c in letters:
+            groups.append(str(800 + ALPHABET.index(c) * 3 + random.randint(0, 2)))
+        groups.append('999')
+    return " ".join(groups)
+
+
+# Zimmermann Telegram style: 4–5 digit numeric groups
+def zimmermann_encode(text: str) -> str:
+    codes: List[str] = []
+    for c in clean(text):
+        base = (ALPHABET.index(c) + 1) * 314 + random.randint(0, 99)
+        if random.random() < 0.5:
+            codes.append(f"{base % 10000:04d}")
+        else:
+            codes.append(f"{base % 100000:05d}")
+    return " ".join(codes)
+
+
+# Book cipher: page.line.word triples
+def book_cipher_encode(text: str) -> str:
+    parts = []
+    for _c in clean(text):
+        parts.append(f"{random.randint(1, 20)}.{random.randint(1, 50)}.{random.randint(1, 15)}")
+    return " ".join(parts)
+
+
+# Arnold-André book cipher: page.section.word triples (tighter ranges)
+def arnold_andre_encode(text: str) -> str:
+    parts = []
+    for _c in clean(text):
+        parts.append(f"{random.randint(1, 20)}.{random.randint(1, 6)}.{random.randint(1, 10)}")
+    return " ".join(parts)
+
+
+# Babington nomenclator: ⟨wNN⟩ / ⟨aNN⟩ tokens
+_BABINGTON_MAP: Dict[str, str] = {
+    c: f"⟨{'w' if i % 2 == 0 else 'a'}{(i * 3 + 7) % 40 + 1:02d}⟩"
+    for i, c in enumerate(ALPHABET)
+}
+
+def babington_encode(text: str) -> str:
+    return " ".join(_BABINGTON_MAP.get(c, '⟨w00⟩') for c in clean(text))
+
+
+# Navajo Code Talker
+_NAVAJO: Dict[str, str] = {
+    'A': 'WOL-LA-CHEE', 'B': 'SHUSH',         'C': 'MOASI',          'D': 'BE',
+    'E': 'DZEH',        'F': 'MA-E',            'G': 'AH-JAH',         'H': 'LIN',
+    'I': 'TKIN',        'J': 'TKELE-CHO-G',     'K': 'KLIZZIE',        'L': 'DIBEH-YAZZIE',
+    'M': 'NA-AS-TSO-SI','N': 'TSAH',            'O': 'A-KHA',          'P': 'CLA-GI-AIH',
+    'Q': 'CA-YEILTH',   'R': 'GAH',             'S': 'DIBEH',          'T': 'THAN-ZIE',
+    'U': 'NO-DA-IH',    'V': 'A-KEH-DI-GLINI',  'W': 'GLOE-IH',        'X': 'AL-AN-AS-DZOH',
+    'Y': 'TSAH-AS-ZIH', 'Z': 'BESH-DO-TLIZ',
+}
+
+def navajo_encode(text: str) -> str:
+    chars = clean(text)[:40]   # keep length sane
+    return "   /   ".join(_NAVAJO.get(c, 'WOL-LA-CHEE') for c in chars)
+
+
+# Null / acrostic cipher: first letter of each word encodes message
+_ACROSTIC: Dict[str, List[str]] = {
+    'A': ['again','along','after','above','alert','among','array'],
+    'B': ['below','brief','board','broad','basis','batch'],
+    'C': ['could','clear','cover','cause','cross','carry','claim'],
+    'D': ['depot','delay','draft','drive','daily','depth'],
+    'E': ['enemy','early','eight','extra','exact','enter'],
+    'F': ['force','front','first','field','flank','final'],
+    'G': ['guard','group','guide','given','going','gains'],
+    'H': ['heavy','holds','heads','hence','hours','house'],
+    'I': ['intel','inner','issue','input','incur'],
+    'J': ['joint','joins','judge','jetty'],
+    'K': ['keeps','knife','known','kings'],
+    'L': ['light','large','lines','lower','leads','local'],
+    'M': ['major','march','motor','mixed','miles','moved'],
+    'N': ['north','night','naval','notes','needs'],
+    'O': ['order','outer','often','opens','other'],
+    'P': ['point','posts','place','parts','phase'],
+    'Q': ['quick','quiet','quota'],
+    'R': ['range','route','radio','raids','right','roads'],
+    'S': ['south','swift','scout','stage','shore','seeks'],
+    'T': ['troop','takes','three','track','turns'],
+    'U': ['under','unite','until','upper','units'],
+    'V': ['vital','vague','value','verse'],
+    'W': ['where','while','width','wings','watch'],
+    'X': ['xerox','extra'],
+    'Y': ['yield','years','young'],
+    'Z': ['zones','zonal','zeal'],
+}
+
+def null_cipher_encode(text: str) -> str:
+    chars = clean(text)[:25]
+    return " ".join(random.choice(_ACROSTIC.get(c, ['extra'])) for c in chars)
+
+
+# Pigpen cipher: Unicode symbol representations (matching real dataset format)
+_PIGPEN_SYMS = [
+    '⌐', '¬', 'r', 'Γ', 'L', '⌐·', '¬·', 'r·', 'Γ·',
+    '┘', '┐', '└', '┌', '─', '┘·', '┐·', '└·', '┌·',
+    'X', 'K', 'X·', 'K·',
+    '⌒', '⌣', '⌒·', '⌣·',
+]
+_PIGPEN_TABLE: Dict[str, str] = {ALPHABET[i]: _PIGPEN_SYMS[i % len(_PIGPEN_SYMS)] for i in range(26)}
+
+def pigpen_encode(text: str) -> str:
+    return " ".join(_PIGPEN_TABLE[c] for c in clean(text))
+
+
+# Commercial code: 5-letter groups; many ending in Z
+def commercial_code_encode(text: str) -> str:
+    chars = clean(text)
+    if not chars:
+        chars = "HELLO"
+    groups: List[str] = []
+    for i in range(0, len(chars), 5):
+        chunk = list(chars[i:i + 5])
+        while len(chunk) < 5:
+            chunk.append(random.choice('XZABCDE'))
+        if random.random() < 0.4:
+            chunk[-1] = random.choice('XZ')
+        groups.append("".join(chunk))
+    return " ".join(groups)
+
+
+# Voynich manuscript render: pseudo-syllabic words
+_VOYNICH_WORDS = [
+    'oror', 'oxed', 'otol', 'qokeedy', 'chedy', 'shedy', 'dainy', 'otaiin',
+    'cheol', 'ykcheol', 'qokal', 'raiin', 'aiiin', 'chol', 'chor',
+    'daral', 'shal', 'sharal', 'okal', 'daiin', 'chedal', 'sheedy',
+    'otedy', 'qotedy', 'ctaiin', 'ytedy', 'rcheol', 'okeedy', 'lkaiin',
+    'okshy', 'okedy', 'otain', 'qokedy', 'okain', 'choldaiin', 'sheol',
+    'ypchol', 'dal', 'shor', 'kaiiin', 'qokeedy', 'ytaiin', 'shaiin',
+]
+
+def voynich_render_encode(text: str) -> str:
+    n_words = max(10, len(clean(text)) // 3)
+    return " ".join(random.choice(_VOYNICH_WORDS) for _ in range(n_words))
+
+
+# Running key: Vigenère with a full sentence as the key
+def running_key_encode(text: str) -> str:
+    plain = clean(text)
+    key = clean(random.choice(BASE_SENTENCES))
+    while len(key) < len(plain):
+        key += key
+    out = [ALPHABET[(ALPHABET.index(p) + ALPHABET.index(key[i])) % 26]
+           for i, p in enumerate(plain)]
+    return with_spacing("".join(out))
+
+
+# One-time pad: truly random letter sequence
+def one_time_pad_encode(text: str) -> str:
+    return with_spacing("".join(random.choice(ALPHABET) for _ in clean(text)))
+
+
+# Vernam: same structure as OTP for text representation
+def vernam_encode(text: str) -> str:
+    return with_spacing("".join(random.choice(ALPHABET) for _ in clean(text)))
+
+
 def make_plain() -> str:
     k = random.randint(1, 4)
     parts = random.sample(BASE_SENTENCES, k=k)
@@ -351,8 +653,18 @@ def record(
     label: str, plaintext: str, ciphertext: str, meta: Dict[str, object], rid: int
 ) -> Dict[str, object]:
     text_clean = clean(ciphertext)
-    text_with_spacing = with_spacing(ciphertext)
-    n = len(text_clean)
+    # Symbolic/numeric ciphers (tap code, morse, polybius, book ciphers, etc.) lose their
+    # distinctive format when passed through with_spacing()'s clean() branch.
+    # Preserve the raw ciphertext when it is not primarily alphabetic.
+    cipher_nonspace = ciphertext.replace(" ", "")
+    alpha_ratio = len(text_clean) / max(1, len(cipher_nonspace))
+    if alpha_ratio >= 0.5:
+        display_text = with_spacing(ciphertext)
+    else:
+        display_text = ciphertext   # keep dots / numbers / symbols intact
+    # text_length uses the plaintext letter count for non-alphabetic ciphers
+    # so difficulty/length are still meaningful even for numeric outputs.
+    n = len(text_clean) if text_clean else len(clean(plaintext))
     if n < 30:
         difficulty = "easy"
     elif n < 80:
@@ -361,8 +673,8 @@ def record(
         difficulty = "hard"
     return {
         "id": f"cda-{rid:07d}",
-        "text": text_with_spacing,
-        "ciphertext": text_with_spacing,
+        "text": display_text,
+        "ciphertext": display_text,
         "plaintext": plaintext,
         "label": label,
         "cipher": label,
@@ -463,6 +775,68 @@ def build_row(label: str, rid: int) -> Dict[str, object]:  # noqa: C901
         alph = "".join(alph)
         return record(label, plain, substitution(plain, alph), {"alphabet": alph}, rid)
 
+    # --- Sparse museum-label generators ---
+
+    if label == "bacon_cipher":
+        return record(label, plain, bacon_cipher_encode(plain), {}, rid)
+
+    if label == "polybius":
+        return record(label, plain, polybius_encode(plain), {}, rid)
+
+    if label == "morse_code":
+        return record(label, plain, morse_encode(plain), {}, rid)
+
+    if label == "tap_code":
+        return record(label, plain, tap_code_encode(plain), {}, rid)
+
+    if label == "aeneas_tacticus":
+        return record(label, plain, aeneas_tacticus_encode(plain), {}, rid)
+
+    if label == "wallis_cipher":
+        return record(label, plain, wallis_cipher_encode(plain), {}, rid)
+
+    if label == "homophonic":
+        return record(label, plain, homophonic_encode(plain), {}, rid)
+
+    if label == "culper_ring":
+        return record(label, plain, culper_ring_encode(plain), {}, rid)
+
+    if label == "zimmermann":
+        return record(label, plain, zimmermann_encode(plain), {}, rid)
+
+    if label == "book_cipher":
+        return record(label, plain, book_cipher_encode(plain), {}, rid)
+
+    if label == "arnold_andre":
+        return record(label, plain, arnold_andre_encode(plain), {}, rid)
+
+    if label == "babington":
+        return record(label, plain, babington_encode(plain), {}, rid)
+
+    if label == "navajo_code":
+        return record(label, plain, navajo_encode(plain), {}, rid)
+
+    if label == "null_cipher":
+        return record(label, plain, null_cipher_encode(plain), {}, rid)
+
+    if label == "pigpen":
+        return record(label, plain, pigpen_encode(plain), {}, rid)
+
+    if label == "commercial_code":
+        return record(label, plain, commercial_code_encode(plain), {}, rid)
+
+    if label == "voynich_render":
+        return record(label, plain, voynich_render_encode(plain), {}, rid)
+
+    if label == "running_key":
+        return record(label, plain, running_key_encode(plain), {}, rid)
+
+    if label == "one_time_pad":
+        return record(label, plain, one_time_pad_encode(plain), {}, rid)
+
+    if label == "vernam":
+        return record(label, plain, vernam_encode(plain), {}, rid)
+
     raise ValueError(f"Unknown label: {label!r}")
 
 
@@ -478,6 +852,12 @@ _SYNTH_LABELS = [
     "vigenere", "beaufort", "gronsfeld", "autokey", "trithemius", "porta",
     "rail_fence", "columnar", "columnar_transposition",
     "scytale", "double_transposition", "stager_route",
+    # sparse museum-only labels now with synthetic generators
+    "aeneas_tacticus", "arnold_andre", "babington", "bacon_cipher",
+    "book_cipher", "commercial_code", "culper_ring", "homophonic",
+    "morse_code", "navajo_code", "null_cipher", "one_time_pad",
+    "pigpen", "polybius", "running_key", "tap_code",
+    "vernam", "voynich_render", "wallis_cipher", "zimmermann",
 ]
 
 

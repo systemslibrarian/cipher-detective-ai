@@ -322,6 +322,12 @@ ALLOWED_LABELS = {
     "vigenere", "beaufort", "gronsfeld", "autokey", "trithemius", "porta",
     "rail_fence", "columnar", "columnar_transposition",
     "scytale", "double_transposition", "stager_route",
+    # sparse museum-only labels now with synthetic generators
+    "aeneas_tacticus", "arnold_andre", "babington", "bacon_cipher",
+    "book_cipher", "commercial_code", "culper_ring", "homophonic",
+    "morse_code", "navajo_code", "null_cipher", "one_time_pad",
+    "pigpen", "polybius", "running_key", "tap_code",
+    "vernam", "voynich_render", "wallis_cipher", "zimmermann",
 }
 
 
