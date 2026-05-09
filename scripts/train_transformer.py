@@ -102,7 +102,7 @@ def main():
         args=training_args,
         train_dataset=ds_train,
         eval_dataset=ds_test,
-        tokenizer=tok,
+        processing_class=tok,
         data_collator=DataCollatorWithPadding(tok),
         compute_metrics=compute_metrics,
     )
