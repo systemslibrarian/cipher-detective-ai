@@ -616,16 +616,31 @@ def heuristic_classify(text: str) -> ModelPrediction:  # noqa: C901 – intentio
                       "cheol", "raiin", "aiiin", "chol", "chor", "daral", "shal",
                       "daiin", "chedal", "sheedy", "okedy", "otain", "qokedy",
                       "okain", "shaiin", "sharal", "okal", "okshy"}
+    # Broad English word set — if ANY of these appear the text is likely English
+    # (null cipher) rather than alien Voynich script.
+    _basic_english = {
+        "the", "and", "that", "have", "for", "not", "with", "you", "this", "but",
+        "are", "was", "its", "his", "her", "our", "can", "has", "had", "all",
+        "one", "two", "new", "old", "now", "say", "who", "may", "use", "into",
+        "from", "they", "what", "when", "each", "will", "also", "then", "come",
+        "look", "call", "give", "over", "just", "know", "time", "long", "down",
+        "most", "some", "take", "only", "good", "even", "back", "year", "much",
+        "right", "name", "after", "little", "place", "great", "being", "same",
+        "still", "found", "many", "should", "before", "other", "where", "while",
+        "about", "people", "number", "sound", "sentence",
+    }
     if stripped and stripped[0].islower():   # quick gate: ciphertext is lowercase
         lc_words = set(re.findall(r"[a-z]+", stripped.lower()))
         if len(lc_words) >= 3 and lc_words & _voynich_words:
             return _deterministic("voynich_render", 0.85)
         # Even without exact word matches, a fully-lowercase alpha-space text
-        # that isn't English is likely voynich render in our dataset.
-        if all(c.islower() or c == " " for c in stripped) and len(stripped) > 8:
-            # Check it's not just garbled English (null cipher)
-            if word_score(stripped) < 2:
-                return _deterministic("voynich_render", 0.72)
+        # that isn't English is likely voynich render.
+        # Guard: if ANY basic English words appear, this is null_cipher, not voynich.
+        if (all(c.islower() or c == " " for c in stripped)
+                and len(stripped) > 8
+                and word_score(stripped) < 2
+                and not (lc_words & _basic_english)):
+            return _deterministic("voynich_render", 0.72)
 
     # -----------------------------------------------------------------------
     # TIER 1b: Numeric / coded formats
