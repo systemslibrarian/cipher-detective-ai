@@ -463,12 +463,17 @@ def make_challenge(cipher_name: str, difficulty: str) -> Tuple[str, str]:
         "EVERY SYSTEM NEEDS AN HONEST THREAT MODEL",
     ]
     plain = random.choice(plaintexts)
-    label = cipher_name
-    if cipher_name == "random":
+    # Normalise legacy aliases to the canonical labels used by the trained
+    # model and heuristic, so Challenge answers match Detect Mode output.
+    _ALIAS = {"caesar_rot": "caesar", "columnar": "columnar_transposition",
+              "substitution": "monoalphabetic"}
+    label = _ALIAS.get(cipher_name, cipher_name)
+    if label == "random":
         label = random.choice(
-            ["caesar_rot", "atbash", "vigenere", "rail_fence", "columnar", "affine", "substitution"]
+            ["caesar", "atbash", "vigenere", "rail_fence",
+             "columnar_transposition", "affine", "monoalphabetic"]
         )
-    if label == "caesar_rot":
+    if label == "caesar":
         shift = random.choice([3, 5, 7, 13, 19])
         return caesar_encrypt(plain, shift), f"Answer: Caesar / ROT shift {shift}. Plaintext: {plain}"
     if label == "atbash":
@@ -479,13 +484,13 @@ def make_challenge(cipher_name: str, difficulty: str) -> Tuple[str, str]:
     if label == "rail_fence":
         rails = 3 if difficulty != "hard" else 4
         return rail_fence_encrypt(plain, rails), f"Answer: Rail Fence with {rails} rails. Plaintext: {plain}"
-    if label == "columnar":
+    if label == "columnar_transposition":
         key = random.choice(["MUSEUM", "LIBRARY", "PATTERN"])
         return columnar_transposition_encrypt(plain, key), f"Answer: Columnar transposition with key {key}. Plaintext: {plain}"
     if label == "affine":
         a, b = random.choice([(5, 8), (7, 3), (11, 6), (17, 9)])
         return affine_encrypt(plain, a, b), f"Answer: Affine cipher a={a}, b={b}. Plaintext: {plain}"
-    if label == "substitution":
+    if label == "monoalphabetic":
         alphabet = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
         random.shuffle(alphabet)
         mapping = "".join(alphabet)
@@ -563,7 +568,8 @@ with gr.Blocks(css=BRAND_CSS, title="Cipher Detective AI") as demo:
         )
         with gr.Row():
             cipher_choice = gr.Dropdown(
-                ["random", "caesar_rot", "atbash", "vigenere", "rail_fence", "columnar", "affine", "substitution"],
+                ["random", "caesar", "atbash", "vigenere", "rail_fence",
+                 "columnar_transposition", "affine", "monoalphabetic"],
                 value="random",
                 label="Challenge type",
             )
