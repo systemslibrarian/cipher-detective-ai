@@ -5,9 +5,11 @@ import json
 from pathlib import Path
 
 import numpy as np
+import torch
 from datasets import Dataset
 from sklearn.metrics import accuracy_score, f1_score, precision_recall_fscore_support
 from sklearn.model_selection import train_test_split
+from sklearn.utils.class_weight import compute_class_weight
 from transformers import (
     AutoModelForSequenceClassification,
     AutoTokenizer,
@@ -34,14 +36,34 @@ def compute_metrics(eval_pred):
         "macro_f1": f1,
     }
 
+def make_weighted_trainer(class_weights_tensor):
+    """Return a Trainer subclass that uses class-weighted cross-entropy loss."""
+
+    class WeightedTrainer(Trainer):
+        def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
+            labels = inputs.pop("labels")
+            outputs = model(**inputs)
+            logits = outputs.logits
+            weights = class_weights_tensor.to(logits.device)
+            loss = torch.nn.functional.cross_entropy(logits, labels, weight=weights)
+            return (loss, outputs) if return_outputs else loss
+
+    return WeightedTrainer
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default="data/cipher_examples.jsonl")
-    ap.add_argument("--model", default="distilbert-base-uncased")
+    ap.add_argument("--test-data", default=None,
+                    help="Separate JSONL file to use as eval set (e.g. blind split). "
+                         "If omitted, 20%% of --data is held out.")
+    ap.add_argument("--model", default="roberta-base")
     ap.add_argument("--out", default="cipher_model")
-    ap.add_argument("--epochs", type=float, default=3.0)
+    ap.add_argument("--epochs", type=float, default=5.0)
     ap.add_argument("--batch-size", type=int, default=16)
-    ap.add_argument("--max-length", type=int, default=256)
+    ap.add_argument("--max-length", type=int, default=512)
+    ap.add_argument("--weighted-loss", action="store_true",
+                    help="Use class-weighted cross-entropy to handle imbalance.")
     args = ap.parse_args()
 
     rows = load_jsonl(args.data)
@@ -63,12 +85,23 @@ def main():
     # schema-inference failures inside Dataset.from_list().
     rows = [{"text": r["text"], "label_id": label2id[r["label"]]} for r in rows]
 
-    train_rows, test_rows = train_test_split(
-        rows,
-        test_size=0.2,
-        random_state=42,
-        stratify=[r["label_id"] for r in rows],
-    )
+    if args.test_data:
+        test_rows_raw = load_jsonl(args.test_data)
+        # Apply same label vocabulary (ignore test labels not in train)
+        test_rows = [
+            {"text": r["text"], "label_id": label2id[r["label"]]}
+            for r in test_rows_raw
+            if r.get("label") in label2id
+        ]
+        train_rows = rows
+        print(f"Using separate test file: {len(test_rows)} eval examples")
+    else:
+        train_rows, test_rows = train_test_split(
+            rows,
+            test_size=0.2,
+            random_state=42,
+            stratify=[r["label_id"] for r in rows],
+        )
 
     ds_train = Dataset.from_list(train_rows)
     ds_test = Dataset.from_list(test_rows)
@@ -106,7 +139,20 @@ def main():
         report_to="none",
     )
 
-    trainer = Trainer(
+    if args.weighted_loss:
+        train_label_ids = [r["label_id"] for r in train_rows]
+        class_weights = compute_class_weight(
+            class_weight="balanced",
+            classes=np.arange(len(labels)),
+            y=train_label_ids,
+        )
+        weights_tensor = torch.tensor(class_weights, dtype=torch.float32)
+        print(f"Class weighting enabled — weight range: [{weights_tensor.min():.2f}, {weights_tensor.max():.2f}]")
+        TrainerClass = make_weighted_trainer(weights_tensor)
+    else:
+        TrainerClass = Trainer
+
+    trainer = TrainerClass(
         model=model,
         args=training_args,
         train_dataset=ds_train,
