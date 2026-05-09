@@ -1,4 +1,4 @@
-.PHONY: help install dev test lint format dataset dataset-large baseline train train-best app clean
+.PHONY: help install dev test lint format dataset dataset-large baseline train train-best train-push app clean
 
 help:
 	@echo "Cipher Detective AI — common tasks"
@@ -12,7 +12,8 @@ help:
 	@echo "  make dataset-large  Augment existing dataset with 500 examples per cipher"
 	@echo "  make baseline       Evaluate the heuristic baseline on the dataset"
 	@echo "  make train          Quick fine-tune (distilroberta, 5 epochs)"
-	@echo "  make train-best     Best-accuracy fine-tune (roberta-base, 10 epochs, focal loss)"
+	@echo "  make train-best     Best-accuracy fine-tune (roberta-base, 10 epochs, focal loss, early stopping)
+	@echo "  make train-push     Same as train-best + push to HF Hub (set HUB_MODEL_ID=user/repo)""
 	@echo "  make app            Launch the Gradio Space locally"
 	@echo "  make clean          Remove caches and build artifacts"
 
@@ -71,7 +72,27 @@ train-best:
 	  --lr 2e-5 \
 	  --warmup-ratio 0.06 \
 	  --label-smoothing 0.05 \
-	  --focal-loss
+	  --focal-loss \
+	  --early-stopping-patience 3
+
+# Same as train-best but pushes the result to the Hugging Face Hub.
+# Usage: make train-push HUB_MODEL_ID=yourname/cipher-detective-model
+HUB_MODEL_ID ?= systemslibrarian/cipher-detective-model
+train-push:
+	python scripts/train_transformer.py \
+	  --data data/cipher_examples.jsonl \
+	  --model roberta-base \
+	  --out cipher_model \
+	  --epochs 10 \
+	  --batch-size 16 \
+	  --grad-accum 2 \
+	  --lr 2e-5 \
+	  --warmup-ratio 0.06 \
+	  --label-smoothing 0.05 \
+	  --focal-loss \
+	  --early-stopping-patience 3 \
+	  --push-to-hub \
+	  --hub-model-id $(HUB_MODEL_ID)
 
 app:
 	python app.py

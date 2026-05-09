@@ -14,6 +14,7 @@ from transformers import (
     AutoModelForSequenceClassification,
     AutoTokenizer,
     DataCollatorWithPadding,
+    EarlyStoppingCallback,
     Trainer,
     TrainingArguments,
 )
@@ -124,6 +125,19 @@ def main():
                     help="Label smoothing factor (0 = off). Helps with similar-class confusion.")
     ap.add_argument("--grad-accum", type=int, default=2,
                     help="Gradient accumulation steps. Effective batch = batch-size × grad-accum.")
+    ap.add_argument(
+        "--early-stopping-patience", type=int, default=3,
+        help="Stop training if macro_f1 doesn't improve for this many eval epochs (0 = off).",
+    )
+    ap.add_argument(
+        "--push-to-hub", action="store_true",
+        help="Push the trained model to the Hugging Face Hub after training.",
+    )
+    ap.add_argument(
+        "--hub-model-id", default=None,
+        help="Hub repo id for --push-to-hub (e.g. username/cipher-model). "
+             "Required when --push-to-hub is set.",
+    )
     args = ap.parse_args()
 
     rows = load_jsonl(args.data)
@@ -207,6 +221,7 @@ def main():
         warmup_ratio=args.warmup_ratio,
         label_smoothing_factor=args.label_smoothing,
         gradient_accumulation_steps=args.grad_accum,
+        lr_scheduler_type="cosine",
         logging_steps=100,
         load_best_model_at_end=True,
         metric_for_best_model="macro_f1",
@@ -216,6 +231,9 @@ def main():
         # Mixed-precision: speeds up training on modern GPUs
         fp16=torch.cuda.is_available(),
         dataloader_num_workers=2,
+        # Hub push (only active when --push-to-hub is passed)
+        push_to_hub=args.push_to_hub,
+        hub_model_id=args.hub_model_id if args.push_to_hub else None,
     )
 
     if args.focal_loss:
@@ -228,6 +246,11 @@ def main():
         print("Using standard cross-entropy loss (no class weighting)")
         TrainerClass = Trainer
 
+    callbacks = []
+    if args.early_stopping_patience > 0:
+        callbacks.append(EarlyStoppingCallback(early_stopping_patience=args.early_stopping_patience))
+        print(f"Early stopping: patience={args.early_stopping_patience} epochs")
+
     trainer = TrainerClass(
         model=model,
         args=training_args,
@@ -236,12 +259,16 @@ def main():
         processing_class=tok,
         data_collator=DataCollatorWithPadding(tok),
         compute_metrics=compute_metrics,
+        callbacks=callbacks or None,
     )
 
     trainer.train()
     metrics = trainer.evaluate()
     trainer.save_model(args.out)
     tok.save_pretrained(args.out)
+    if args.push_to_hub:
+        print(f"Pushing model to Hub: {args.hub_model_id}")
+        trainer.push_to_hub()
 
     out_path = Path(args.out)
     (out_path / "training_metrics.json").write_text(
