@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- CI: auto-sync to Hugging Face Space on push to main
 - **Solve Substitution tab**: hill-climbing solver for monoalphabetic substitution,
   seeded from observed letter-frequency rank, scored by English bigram log-prob,
   with random restarts to escape local optima. Educational only.
