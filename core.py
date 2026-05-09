@@ -920,6 +920,13 @@ def heuristic_classify(text: str) -> ModelPrediction:  # noqa: C901 – intentio
 
     # --- High IoC (≥ 0.058): monoalphabetic substitution family ------------
     if ioc >= 0.058:
+        # Lorenz: near-plaintext cipher using character substitutions without spaces.
+        # Signature: very low chi (English letter frequencies intact), very high
+        # bigram support (English pair sequences preserved), but few recognisable
+        # words (text is one run-together string with occasional garbled chars).
+        # monoalphabetic FP=0%, rail_fence FP=7% (already handled by transp check).
+        if raw_chi < 50 and bgm > 0.85 and raw_words < 3:
+            return _deterministic("lorenz", 0.48)
         if 0.058 <= ioc < 0.068:
             # Could be monoalphabetic substitution OR transposition with no bigram signal
             if transp >= 0.35 and bgm <= 0.50:
