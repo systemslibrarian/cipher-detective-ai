@@ -745,8 +745,11 @@ def heuristic_classify(text: str) -> ModelPrediction:  # noqa: C901 – intentio
                 if all(1 <= n <= 26 for n in nums):
                     return _deterministic("aeneas_tacticus", 0.72)
                 # Wallis cipher: uses 90 and/or 91 as explicit group markers
-                # (they appear multiple times as structural delimiters)
-                if nums.count(90) >= 2 or nums.count(91) >= 2:
+                # (they appear multiple times as structural delimiters).
+                # Wallis rate is ~30 %; random homophonic rate is ~2 %, so
+                # use a 10 % threshold to eliminate false positives.
+                _w90 = (nums.count(90) + nums.count(91)) / len(nums)
+                if _w90 >= 0.10:
                     return _deterministic("wallis_cipher", 0.70)
                 # Nihilist: Polybius row+col sums → minimum possible value is 22
                 # (smallest polybius cell 11 + smallest key cell 11). So a nihilist
@@ -765,7 +768,8 @@ def heuristic_classify(text: str) -> ModelPrediction:  # noqa: C901 – intentio
             if avg_len < 3.0 and len(tokens) >= 5:
                 max_num = max(nums) if nums else 0
                 # Wallis cipher markers still detectable in mixed-length text
-                if nums.count(90) >= 2 or nums.count(91) >= 2:
+                _w90 = (nums.count(90) + nums.count(91)) / len(nums)
+                if _w90 >= 0.10:
                     return _deterministic("wallis_cipher", 0.62)
                 if max_num <= 26:
                     return _deterministic("aeneas_tacticus", 0.55)
@@ -961,6 +965,16 @@ def heuristic_classify(text: str) -> ModelPrediction:  # noqa: C901 – intentio
 
     # --- Very low IoC (< 0.040): machine ciphers / OTP / strong stream -----
     if ioc < 0.040:
+        # Trithemius: progressive Caesar (shift = position index).  Decrypting
+        # with the inverse progressive key produces English with low chi and
+        # recognisable words.  This check fires before the enigma catch-all.
+        if n_letters >= 25:
+            _tri_dec = "".join(
+                chr((ord(c) - 65 - i % 26) % 26 + 65)
+                for i, c in enumerate(letters)
+            )
+            if chi_squared_for_english(_tri_dec) < 50 and word_score(_tri_dec) >= 3:
+                return _deterministic("trithemius", 0.60)
         return _deterministic("enigma", 0.25)
 
     # --- Catch-all for anything remaining ----------------------------------
