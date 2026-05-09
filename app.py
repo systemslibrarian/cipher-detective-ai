@@ -498,7 +498,7 @@ def make_challenge(cipher_name: str, difficulty: str) -> Tuple[str, str]:
     return plain, f"Answer: Plaintext. Plaintext: {plain}"
 
 
-with gr.Blocks(css=BRAND_CSS, title="Cipher Detective AI") as demo:
+with gr.Blocks(title="Cipher Detective AI") as demo:
     gr.HTML(
         """
         <header id="hero" role="banner">
@@ -543,8 +543,8 @@ with gr.Blocks(css=BRAND_CSS, title="Cipher Detective AI") as demo:
                     label="Try an example",
                 )
             with gr.Column(scale=1):
-                scores = gr.Markdown(label="Confidence scores", show_label=True)
-        report = gr.Markdown(label="Detective report", show_label=True)
+                scores = gr.Markdown(label="Confidence scores", container=True)
+        report = gr.Markdown(label="Detective report", container=True)
         # Accept Enter key from the textbox and the click button.
         ciphertext.submit(detective_mode, inputs=[ciphertext], outputs=[report, scores])
         analyze_btn.click(detective_mode, inputs=[ciphertext], outputs=[report, scores])
@@ -557,7 +557,7 @@ with gr.Blocks(css=BRAND_CSS, title="Cipher Detective AI") as demo:
             placeholder="Paste any ciphertext to examine the evidence...",
         )
         explain_btn = gr.Button("Show evidence notebook", elem_id="explain-btn")
-        explain_out = gr.Markdown(label="Evidence notebook", show_label=True)
+        explain_out = gr.Markdown(label="Evidence notebook", container=True)
         explain_input.submit(explain_only, inputs=[explain_input], outputs=[explain_out])
         explain_btn.click(explain_only, inputs=[explain_input], outputs=[explain_out])
 
@@ -617,8 +617,8 @@ with gr.Blocks(css=BRAND_CSS, title="Cipher Detective AI") as demo:
                     info="Number for Caesar, word for Vigenère, two ints (a b) for Affine. Leave blank for auto / Atbash.",
                 )
                 decode_btn = gr.Button("Decode", variant="primary", elem_id="decode-btn")
-        decode_out = gr.Markdown(label="Decoded result + quality check", show_label=True)
-        decode_note = gr.Markdown(label="Method note", show_label=True)
+        decode_out = gr.Markdown(label="Decoded result + quality check", container=True)
+        decode_note = gr.Markdown(label="Method note", container=True)
         decode_btn.click(try_decode, inputs=[decode_input, decode_method, decode_key], outputs=[decode_out, decode_note])
 
     with gr.Tab("Compare Mode"):
@@ -634,9 +634,9 @@ with gr.Blocks(css=BRAND_CSS, title="Cipher Detective AI") as demo:
         )
         compare_btn = gr.Button("Compare methods", variant="primary", elem_id="compare-btn")
         with gr.Row():
-            heur_out = gr.Markdown(label="Heuristic baseline", show_label=True)
-            ml_out = gr.Markdown(label="Transformer classifier", show_label=True)
-        agreement_out = gr.Markdown(label="Agreement summary", show_label=True)
+            heur_out = gr.Markdown(label="Heuristic baseline", container=True)
+            ml_out = gr.Markdown(label="Transformer classifier", container=True)
+        agreement_out = gr.Markdown(label="Agreement summary", container=True)
         compare_input.submit(compare_modes, inputs=[compare_input], outputs=[heur_out, ml_out, agreement_out])
         compare_btn.click(compare_modes, inputs=[compare_input], outputs=[heur_out, ml_out, agreement_out])
 
@@ -670,8 +670,8 @@ with gr.Blocks(css=BRAND_CSS, title="Cipher Detective AI") as demo:
                     variant="primary",
                     elem_id="solve-btn",
                 )
-        solve_out = gr.Markdown(label="Recovered plaintext + key", show_label=True)
-        solve_note = gr.Markdown(label="Method note", show_label=True)
+        solve_out = gr.Markdown(label="Recovered plaintext + key", container=True)
+        solve_note = gr.Markdown(label="Method note", container=True)
         solve_btn.click(
             solve_substitution,
             inputs=[solve_input, iters, restarts],
@@ -708,4 +708,4 @@ with gr.Blocks(css=BRAND_CSS, title="Cipher Detective AI") as demo:
         )
 
 if __name__ == "__main__":
-    demo.launch()
+    demo.launch(css=BRAND_CSS)

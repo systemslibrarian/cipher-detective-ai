@@ -1,7 +1,7 @@
 # Runtime dependencies for the Hugging Face Space.
 # Dev dependencies (pytest, ruff, etc.) live in requirements-dev.txt.
 audioop-lts>=0.2.1; python_version >= "3.13"
-gradio>=4.44.0
+gradio>=5.0.0
 transformers>=4.44.0
 torch>=2.2.0
 datasets>=2.20.0
