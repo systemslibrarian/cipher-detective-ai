@@ -19,6 +19,11 @@ size_categories:
 
 A labeled educational dataset of classical cipher examples for teaching cryptanalysis and training small cipher-family classifiers.
 
+**Part of the Cipher Detective AI project:**
+- 🕵️ Space: [systemslibrarian/cipher-detective-ai](https://huggingface.co/spaces/systemslibrarian/cipher-detective-ai)
+- 📦 Dataset: [systemslibrarian/classical-cipher-corpus](https://huggingface.co/datasets/systemslibrarian/classical-cipher-corpus) _(this repo)_
+- 🤖 Model: [systemslibrarian/cipher-detective-classifier](https://huggingface.co/systemslibrarian/cipher-detective-classifier)
+
 ## Intended use
 
 - Teach classical cryptanalysis.

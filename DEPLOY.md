@@ -6,8 +6,7 @@ This guide walks through publishing the **Space**, the **dataset**, and the **mo
 
 ```bash
 pip install -r requirements.txt
-pip install -U huggingface_hub
-huggingface-cli login
+hf auth login
 ```
 
 Pick a single Hub username (e.g. `systemslibrarian`) and use it for all three repos so they cross-link cleanly.
@@ -25,9 +24,9 @@ Pick a single Hub username (e.g. `systemslibrarian`) and use it for all three re
 Create them in the Hub UI or via:
 
 ```bash
-huggingface-cli repo create cipher-detective-ai --type space --space_sdk gradio
-huggingface-cli repo create classical-cipher-corpus --type dataset
-huggingface-cli repo create cipher-detective-classifier --type model
+hf repos create cipher-detective-ai --type space --space-sdk gradio
+hf repos create classical-cipher-corpus --type dataset
+hf repos create cipher-detective-classifier --type model
 ```
 
 ---
@@ -35,15 +34,15 @@ huggingface-cli repo create cipher-detective-classifier --type model
 ## 2. Push the Space
 
 ```bash
-git init
-git add .
-git commit -m "Initial public-ready Cipher Detective AI Space"
-git branch -M main
+git lfs install
+git lfs track "*.jsonl"
+git add .gitattributes
+git commit -m "Track large files with git LFS"
 git remote add space https://huggingface.co/spaces/systemslibrarian/cipher-detective-ai
 git push space main
 ```
 
-(You can also keep GitHub as `origin` and use `space` as a second remote.)
+Note: HF rejects files > 10 MB unless tracked with git LFS. The `*.jsonl` pattern covers the dataset file. Keep GitHub as `origin` and use `space` as a second remote.
 
 ---
 
@@ -56,14 +55,12 @@ python scripts/generate_dataset.py --out data/cipher_examples.jsonl --n 50000 --
 head -n 1 data/cipher_examples.jsonl | python -m json.tool
 
 # Upload to the dataset repo:
-huggingface-cli upload systemslibrarian/classical-cipher-corpus \
-    data/cipher_examples.jsonl \
-    --repo-type dataset
+hf upload systemslibrarian/classical-cipher-corpus \
+    data/cipher_examples.jsonl --repo-type dataset
 
 # Publish the dataset card:
-huggingface-cli upload systemslibrarian/classical-cipher-corpus \
-    hf_cards/dataset_README.md README.md \
-    --repo-type dataset
+hf upload systemslibrarian/classical-cipher-corpus \
+    hf_cards/dataset_README.md README.md --repo-type dataset
 ```
 
 ---
@@ -80,8 +77,8 @@ python scripts/train_transformer.py \
 # `cipher_model/` now contains the model, tokenizer,
 # `training_metrics.json`, and `label_mapping.json`.
 
-huggingface-cli upload systemslibrarian/cipher-detective-classifier ./cipher_model
-huggingface-cli upload systemslibrarian/cipher-detective-classifier \
+hf upload systemslibrarian/cipher-detective-classifier ./cipher_model
+hf upload systemslibrarian/cipher-detective-classifier \
     hf_cards/model_README.md README.md
 ```
 
