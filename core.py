@@ -28,10 +28,31 @@ ENGLISH_FREQ = {
     "Y": 1.974, "Z": 0.074,
 }
 COMMON_WORDS = [
-    "THE", "AND", "THAT", "HAVE", "FOR", "NOT", "WITH", "YOU", "THIS", "BUT",
-    "SYSTEM", "SECURITY", "CIPHER", "MESSAGE", "MODEL", "PATTERN", "ATTACK",
-    "LIBRARY", "KNOWLEDGE", "COMMUNITY", "CRYPTOGRAPHY", "FREQUENCY"
+    # High-frequency English function/content words (4+ chars — substring match is safe)
+    "THAT", "HAVE", "WITH", "FROM", "WILL", "THEY", "BEEN", "WHEN",
+    "WERE", "INTO", "THAN", "THEM", "MORE", "WHAT", "YOUR", "EACH", "SOME",
+    "OVER", "JUST", "ALSO", "BACK", "VERY", "TIME", "COME", "MAKE", "TAKE",
+    "ONLY", "EVEN", "KNOW", "MANY", "MOST", "SUCH", "MUST", "LONG", "UPON",
+    "UNTO", "SEND", "GIVE", "FIND", "WELL", "PART", "HAND", "HERE", "SAID",
+    "LAST", "NEXT", "BOTH", "LIFE", "DEATH", "LOVE", "KING", "LORD", "ARMY",
+    "ENEMY", "SECRET", "CIPHER", "CIPHERS", "MESSAGE", "ATTACK", "LETTER",
+    "LETTERS", "BEFORE", "SHOULD", "FORCE", "ORDER", "PAIRS", "THREE",
+    "HUMAN", "STRONG", "SECURE", "PATTERN", "KEYWORD", "MACHINE", "WITHOUT",
+    "EVIDENCE", "ALPHABET", "ENCODING", "FREQUENCY", "KNOWLEDGE", "ENCRYPTION",
+    "TRANSPOSITION", "SUBSTITUTION", "COINCIDENCE", "POLYALPHABETIC",
+    "CIPHERTEXT", "PLAINTEXT", "POLYBIUS", "VIGENERE", "ENIGMA", "COLUMNAR",
+    "INDEX", "PUBLIC", "SIGNAL", "SQUARE", "ITSELF", "CAREFUL", "BRUTE",
+    "SHOW", "USES", "USED", "WORKS", "CLAIM", "NINETEEN",
+    # Short words matched as whole words only (stored separately, see word_score)
+    "THE", "AND", "FOR", "NOT", "YOU", "THIS", "BUT", "ARE", "CAN", "HIS",
+    "HER", "OUR", "OUT", "WHO", "ITS", "WAS", "HAS", "NOW", "HIM", "MAY",
+    "SAY", "ALL", "ONE", "GET", "GOD", "MAN", "WAR", "END", "DAY", "KEY",
+    "USE", "TWO",
 ]
+# Short words (≤3 chars) need whole-word matching to avoid false positives.
+# Substring matching of "THE" across word boundaries in cipher text causes
+# ~40% of short texts to spuriously score ≥ 1, breaking the brute-force gate.
+_SHORT_WORDS = frozenset(w for w in COMMON_WORDS if len(w) <= 3)
 BIGRAMS = ["TH", "HE", "IN", "ER", "AN", "RE", "ON", "AT", "EN", "ND", "TI", "ES", "OR", "TE"]
 TRIGRAMS = ["THE", "AND", "ING", "ION", "ENT", "HER", "FOR", "THA", "NTH", "INT"]
 
@@ -222,7 +243,11 @@ def shannon_entropy(letters: str) -> float:
 
 def word_score(text: str) -> int:
     joined = re.sub(r"[^A-Z ]", " ", text.upper())
-    return sum(joined.count(w) for w in COMMON_WORDS)
+    tokens = set(joined.split())
+    # Long words: substring count (safe); short words: whole-word match only
+    score = sum(joined.count(w) for w in COMMON_WORDS if w not in _SHORT_WORDS)
+    score += sum(1 for w in _SHORT_WORDS if w in tokens)
+    return score
 
 
 def ngram_counts(letters: str, n: int, top: int = 8) -> List[Tuple[str, int]]:
@@ -802,6 +827,7 @@ def heuristic_classify(text: str) -> ModelPrediction:  # noqa: C901 – intentio
     ioc = ev.index_of_coincidence
     best_shift, best_chi, best_words, _ = ev.caesar_candidates[0]
     atbash_words = word_score(ev.atbash_plaintext)
+    atbash_chi = chi_squared_for_english(clean_letters(ev.atbash_plaintext))
     affine_words = ev.affine_candidates[0][3] if ev.affine_candidates else 0
     raw_words = word_score(text)
     raw_chi = chi_squared_for_english(letters)
@@ -820,16 +846,27 @@ def heuristic_classify(text: str) -> ModelPrediction:  # noqa: C901 – intentio
     if raw_words >= 3 and raw_chi < 150:
         return _deterministic("plaintext", min(0.82, 0.18 + 0.08 * raw_words))
 
-    # Atbash: one-step decode
-    if atbash_words >= 2:
-        return _deterministic("atbash", min(0.82, 0.25 + 0.07 * atbash_words))
+    # For short texts the word list may not produce 2 hits even for correct
+    # decodes (e.g. "LIBERTY OR DEATH" → only "DEATH" matches).  Use a lower
+    # threshold of 1 when the text is short enough that it would otherwise
+    # fall through to too_short anyway.
+    _short = n_letters < 25
+    _atbash_thr = 1 if _short else 2
+    _bf_thr = 1 if _short else 2
+
+    # Atbash: word match OR chi-squared of decoded text is very low.
+    # chi(atbash(atbash_text)) = chi(plaintext) ≈ 15-50 for any natural language.
+    # chi for monoalphabetic/other: p10 ≥ 391 — threshold of 100 is safe.
+    if atbash_words >= _atbash_thr or (n_letters >= 25 and atbash_chi < 100):
+        return _deterministic("atbash", min(0.82, 0.25 + 0.07 * max(atbash_words, 1)))
 
     # ROT-13: shift-13 is a special case of Caesar
-    if best_shift == 13 and best_words >= 2:
-        return _deterministic("rot13", min(0.85, 0.25 + 0.08 * best_words))
+    # For non-English phrases, best_words may be 0 but best_chi is still very low.
+    if best_shift == 13 and (best_words >= _bf_thr or (n_letters >= 25 and best_chi < 100)):
+        return _deterministic("rot13", min(0.85, 0.25 + 0.08 * max(best_words, 1)))
 
     # Caesar / ROT-N: any non-zero shift that produces English
-    if best_words >= 2 and best_shift != 0:
+    if best_words >= _bf_thr and best_shift != 0:
         conf = min(0.82, 0.22 + 0.08 * best_words)
         if affine_words >= best_words + 2:
             return _deterministic("affine", min(0.78, 0.20 + 0.07 * affine_words))
@@ -848,15 +885,20 @@ def heuristic_classify(text: str) -> ModelPrediction:  # noqa: C901 – intentio
     # -----------------------------------------------------------------------
 
     # --- Transposition: English IoC + disrupted bigrams ---------------------
-    if transp >= 0.50 and bgm <= 0.40 and ioc >= 0.055:
+    # KEY INSIGHT: transposition ciphers keep English letter frequencies
+    # (raw_chi LOW) while monoalphabetic raises chi (letters shift away from
+    # English). Lorenz is near-plaintext with bgm ≈ 1.0 — excluded by bgm guard.
+    _transp_by_chi = (ioc >= 0.055 and raw_chi < 80 and 0.20 <= bgm <= 0.70)
+    _transp_by_signal = (transp >= 0.50 and bgm <= 0.40 and ioc >= 0.055)
+    if _transp_by_chi or _transp_by_signal:
         # Transposition ciphers preserve letter frequencies → high IoC,
-        # but scramble bigrams → low bigram_support.
+        # but scramble bigrams → lower bigram_support.
         if n_letters <= 70:
-            return _deterministic("rail_fence", 0.45)
+            return _deterministic("rail_fence", 0.48)
         elif n_letters <= 180:
-            return _deterministic("columnar_transposition", 0.40)
+            return _deterministic("columnar_transposition", 0.45)
         else:
-            return _deterministic("double_transposition", 0.35)
+            return _deterministic("double_transposition", 0.40)
 
     # --- High IoC (≥ 0.058): monoalphabetic substitution family ------------
     if ioc >= 0.058:
