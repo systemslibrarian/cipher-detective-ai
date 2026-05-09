@@ -15,7 +15,6 @@ import math
 import re
 from collections import Counter
 from dataclasses import dataclass
-from typing import Dict, List, Tuple
 
 ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 ENGLISH_IOC = 0.0667        # English plaintext / monoalphabetic baseline.
@@ -60,7 +59,7 @@ TRIGRAMS = ["THE", "AND", "ING", "ION", "ENT", "HER", "FOR", "THA", "NTH", "INT"
 class ModelPrediction:
     label: str
     confidence: float
-    scores: Dict[str, float]
+    scores: dict[str, float]
     source: str
 
 @dataclass
@@ -70,17 +69,17 @@ class Evidence:
     index_of_coincidence: float
     entropy: float
     chi_squared: float
-    top_letters: List[Tuple[str, int, float]]
-    top_bigrams: List[Tuple[str, int]]
-    top_trigrams: List[Tuple[str, int]]
-    caesar_candidates: List[Tuple[int, float, int, str]]
+    top_letters: list[tuple[str, int, float]]
+    top_bigrams: list[tuple[str, int]]
+    top_trigrams: list[tuple[str, int]]
+    caesar_candidates: list[tuple[int, float, int, str]]
     atbash_plaintext: str
-    affine_candidates: List[Tuple[int, int, float, int, str]]
+    affine_candidates: list[tuple[int, int, float, int, str]]
     friedman_key_length: float
-    kasiski_key_lengths: List[Tuple[int, int]]
+    kasiski_key_lengths: list[tuple[int, int]]
     transposition_signal: float
     bigram_support: float
-    notes: List[str]
+    notes: list[str]
 
 
 def clean_letters(text: str) -> str:
@@ -250,14 +249,14 @@ def word_score(text: str) -> int:
     return score
 
 
-def ngram_counts(letters: str, n: int, top: int = 8) -> List[Tuple[str, int]]:
+def ngram_counts(letters: str, n: int, top: int = 8) -> list[tuple[str, int]]:
     if len(letters) < n:
         return []
     c = Counter(letters[i:i+n] for i in range(len(letters) - n + 1))
     return c.most_common(top)
 
 
-def best_caesar_candidates(text: str, top_n: int = 5) -> List[Tuple[int, float, int, str]]:
+def best_caesar_candidates(text: str, top_n: int = 5) -> list[tuple[int, float, int, str]]:
     candidates = []
     for shift in range(26):
         decoded = caesar_shift(text, shift)
@@ -270,9 +269,9 @@ def best_caesar_candidates(text: str, top_n: int = 5) -> List[Tuple[int, float, 
     return candidates[:top_n]
 
 
-def best_affine_candidates(text: str, top_n: int = 5) -> List[Tuple[int, int, float, int, str]]:
+def best_affine_candidates(text: str, top_n: int = 5) -> list[tuple[int, int, float, int, str]]:
     """Brute-force the 312 valid Affine keys and return the most English-looking decryptions."""
-    candidates: List[Tuple[int, int, float, int, str]] = []
+    candidates: list[tuple[int, int, float, int, str]] = []
     for a in (1, 3, 5, 7, 9, 11, 15, 17, 19, 21, 23, 25):
         for b in range(26):
             try:
@@ -303,21 +302,21 @@ def friedman_key_length(letters: str) -> float:
     return max(0.0, k)
 
 
-def kasiski_key_lengths(letters: str, min_len: int = 3, top: int = 5) -> List[Tuple[int, int]]:
+def kasiski_key_lengths(letters: str, min_len: int = 3, top: int = 5) -> list[tuple[int, int]]:
     """Kasiski examination: factor distances between repeated trigrams.
 
     Returns ``[(candidate_length, support_count), ...]`` sorted by support.
     """
     if len(letters) < 30:
         return []
-    positions: Dict[str, List[int]] = {}
+    positions: dict[str, list[int]] = {}
     for i in range(len(letters) - min_len + 1):
         positions.setdefault(letters[i:i + min_len], []).append(i)
     factor_support: Counter = Counter()
     for _gram, idxs in positions.items():
         if len(idxs) < 2:
             continue
-        for a, b in zip(idxs, idxs[1:]):
+        for a, b in zip(idxs, idxs[1:], strict=False):
             d = b - a
             for k in range(2, min(21, d + 1)):
                 if d % k == 0:
@@ -325,7 +324,7 @@ def kasiski_key_lengths(letters: str, min_len: int = 3, top: int = 5) -> List[Tu
     return factor_support.most_common(top)
 
 
-def transposition_signal(letters: str) -> Tuple[float, float]:
+def transposition_signal(letters: str) -> tuple[float, float]:
     """Heuristic signal for transposition ciphers.
 
     Transposition keeps English letter frequencies intact (so chi-squared looks
@@ -361,7 +360,7 @@ def transposition_signal(letters: str) -> Tuple[float, float]:
 # small training corpus — but enough to give a hill-climbing solver a useful
 # gradient. Unseen bigrams fall back to summed unigram log-probs (a standard
 # backoff trick) so the gradient stays smooth instead of plateauing on a floor.
-_BIGRAM_LOG_PROB: Dict[str, float] = {
+_BIGRAM_LOG_PROB: dict[str, float] = {
     "TH": -2.31, "HE": -2.43, "IN": -2.78, "ER": -2.90, "AN": -3.00, "RE": -3.05,
     "ON": -3.18, "AT": -3.25, "EN": -3.27, "ND": -3.30, "TI": -3.40, "ES": -3.45,
     "OR": -3.48, "TE": -3.55, "OF": -3.60, "ED": -3.65, "IS": -3.70, "IT": -3.72,
@@ -373,7 +372,7 @@ _BIGRAM_LOG_PROB: Dict[str, float] = {
     "OM": -4.65, "UR": -4.68,
 }
 # log10 of English letter frequency / 100 — used as a backoff for unseen bigrams.
-_UNIGRAM_LOG_PROB: Dict[str, float] = {
+_UNIGRAM_LOG_PROB: dict[str, float] = {
     ch: math.log10(max(freq, 0.01) / 100.0) for ch, freq in ENGLISH_FREQ.items()
 }
 _BIGRAM_FLOOR = -8.0
@@ -415,7 +414,7 @@ def hill_climb_substitution(
     iterations: int = 4000,
     restarts: int = 3,
     seed: int | None = 42,
-) -> Tuple[str, str, float]:
+) -> tuple[str, str, float]:
     """Solve monoalphabetic substitution by hill climbing on bigram log-prob.
 
     Returns ``(plaintext_guess, key, score)``. ``key`` is a 26-letter string
@@ -436,7 +435,7 @@ def hill_climb_substitution(
     observed = [ch for ch, _ in Counter(letters).most_common()]
     observed += [c for c in ALPHABET if c not in observed]  # fill missing letters
     seed_key = list(ALPHABET)
-    for cipher_letter, plain_letter in zip(observed, english_order):
+    for cipher_letter, plain_letter in zip(observed, english_order, strict=False):
         seed_key[ALPHABET.index(cipher_letter)] = plain_letter
 
     best_key = "".join(seed_key)
@@ -471,7 +470,7 @@ def hill_climb_substitution(
     return plaintext, best_key, best_score
 
 
-def frequency_table(letters: str) -> List[Tuple[str, int, float]]:
+def frequency_table(letters: str) -> list[tuple[str, int, float]]:
     n = max(len(letters), 1)
     counts = Counter(letters)
     return [(ch, count, round(100 * count / n, 2)) for ch, count in counts.most_common()]
@@ -491,7 +490,7 @@ def analyze_evidence(text: str) -> Evidence:
     kasiski = kasiski_key_lengths(letters)
     transp, bigram_sup = transposition_signal(letters)
 
-    notes: List[str] = []
+    notes: list[str] = []
     if len(letters) < 40:
         notes.append("Short samples are hard to classify reliably. Add more ciphertext for better evidence.")
     if 0.060 <= ioc <= 0.075:
@@ -540,7 +539,7 @@ def analyze_evidence(text: str) -> Evidence:
 # ---------------------------------------------------------------------------
 # All 81 cipher labels present in the full dataset.
 # ---------------------------------------------------------------------------
-_ALL_LABELS: List[str] = [
+_ALL_LABELS: list[str] = [
     "adfgvx", "adfgx", "aeneas_tacticus", "affine", "alberti_disk", "argenti",
     "arnold_andre", "atbash", "autokey", "babington", "bacon_cipher", "bazeries",
     "beaufort", "bifid", "book_cipher", "caesar", "caesar_rot", "cardano_autokey",
@@ -563,7 +562,7 @@ _ALL_LABELS: List[str] = [
 _PRIOR = 1.0 / len(_ALL_LABELS)
 
 
-def _build_scores(**overrides: float) -> Dict[str, float]:
+def _build_scores(**overrides: float) -> dict[str, float]:
     """Return a score dict seeded with the uniform prior and the given boosts."""
     s = {lbl: _PRIOR for lbl in _ALL_LABELS}
     for k, v in overrides.items():
@@ -572,7 +571,7 @@ def _build_scores(**overrides: float) -> Dict[str, float]:
     return s
 
 
-def _norm_pred(scores: Dict[str, float], source: str = "heuristic") -> ModelPrediction:
+def _norm_pred(scores: dict[str, float], source: str = "heuristic") -> ModelPrediction:
     total = sum(scores.values()) or 1.0
     norm = {k: round(v / total, 6) for k, v in scores.items()}
     label = max(norm, key=norm.get)

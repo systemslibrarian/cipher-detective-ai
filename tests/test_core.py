@@ -31,9 +31,7 @@ from core import (
     transposition_signal,
     vigenere_decrypt,
     vigenere_encrypt,
-    word_score,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers / fixtures
@@ -344,7 +342,7 @@ def test_dataset_generator_schema(tmp_path):
     ]
     res = subprocess.run(cmd, capture_output=True, text=True, cwd=REPO_ROOT)
     assert res.returncode == 0, res.stderr
-    rows = [json.loads(l) for l in out.read_text().splitlines() if l.strip()]
+    rows = [json.loads(ln) for ln in out.read_text().splitlines() if ln.strip()]
     assert len(rows) == 32
     for r in rows:
         assert REQUIRED_KEYS.issubset(r.keys()), f"missing keys: {REQUIRED_KEYS - r.keys()}"

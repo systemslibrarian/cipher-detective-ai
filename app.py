@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import os
 import random
-from typing import Dict, Tuple
 
 import gradio as gr
 
@@ -186,7 +185,7 @@ def random_example() -> str:
     return random.choice(EXAMPLES)[0]
 
 
-def solve_substitution(ciphertext: str, iterations: int, restarts: int) -> Tuple[str, str]:
+def solve_substitution(ciphertext: str, iterations: int, restarts: int) -> tuple[str, str]:
     """Hill-climbing solver for monoalphabetic substitution. Educational only."""
     letters = clean_letters(ciphertext)
     if len(letters) < 30:
@@ -242,7 +241,7 @@ def transformer_predict(text: str) -> ModelPrediction | None:
         result = MODEL(text[:512])
         if isinstance(result, list) and result and isinstance(result[0], list):
             result = result[0]
-        scores: Dict[str, float] = {}
+        scores: dict[str, float] = {}
         for row in result:
             label = str(row["label"]).lower().replace("label_", "")
             scores[label] = float(row["score"])
@@ -261,7 +260,7 @@ def combined_prediction(text: str) -> ModelPrediction:
     return heuristic_classify(text)
 
 
-def detective_mode(ciphertext: str) -> Tuple[str, str]:
+def detective_mode(ciphertext: str) -> tuple[str, str]:
     if not clean_letters(ciphertext):
         return "Paste a classical ciphertext sample to begin.", ""
     pred = combined_prediction(ciphertext)
@@ -331,7 +330,7 @@ def explain_only(ciphertext: str) -> str:
 DECODE_METHODS = ["caesar_rot", "atbash", "vigenere", "affine", "auto-best-caesar", "auto-best-affine"]
 
 
-def try_decode(ciphertext: str, method: str, key_text: str) -> Tuple[str, str]:
+def try_decode(ciphertext: str, method: str, key_text: str) -> tuple[str, str]:
     """Attempt a manual decode and score the result."""
     letters = clean_letters(ciphertext)
     if not letters:
@@ -409,7 +408,7 @@ def try_decode(ciphertext: str, method: str, key_text: str) -> Tuple[str, str]:
     return output, note
 
 
-def compare_modes(ciphertext: str) -> Tuple[str, str, str]:
+def compare_modes(ciphertext: str) -> tuple[str, str, str]:
     """Side-by-side: heuristic vs Transformer, plus an agreement summary."""
     if not clean_letters(ciphertext):
         return "Paste text first.", "Paste text first.", ""
@@ -453,7 +452,7 @@ def compare_modes(ciphertext: str) -> Tuple[str, str, str]:
 
 
 
-def make_challenge(cipher_name: str, difficulty: str) -> Tuple[str, str]:
+def make_challenge(cipher_name: str, difficulty: str) -> tuple[str, str]:
     plaintexts = [
         "THE LIBRARY PRESERVES KNOWLEDGE FOR THE COMMUNITY",
         "CLASSICAL CIPHERS TEACH WHY MODERN SECURITY MATTERS",
