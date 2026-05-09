@@ -45,6 +45,15 @@ def main():
     args = ap.parse_args()
 
     rows = load_jsonl(args.data)
+
+    # Drop labels with fewer than 2 examples (can't stratify-split them).
+    from collections import Counter
+    label_counts = Counter(r["label"] for r in rows)
+    dropped = {lbl for lbl, cnt in label_counts.items() if cnt < 2}
+    if dropped:
+        print(f"Dropping {len(dropped)} label(s) with <2 examples: {sorted(dropped)}")
+        rows = [r for r in rows if r["label"] not in dropped]
+
     labels = sorted({r["label"] for r in rows})
     label2id = {label: i for i, label in enumerate(labels)}
     id2label = {i: label for label, i in label2id.items()}

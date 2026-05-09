@@ -49,6 +49,8 @@ def main() -> None:
     for r in rows_in:
         ciphertext = r.get("ciphertext", "").strip()
         label = r.get("cipher_type", "").strip()
+        # Normalise known typos so they don't create singleton classes.
+        label = label.rstrip("s") if label == "wallis_ciphers" else label
         if not ciphertext or not label:
             skipped += 1
             continue
