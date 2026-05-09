@@ -884,6 +884,17 @@ def heuristic_classify(text: str) -> ModelPrediction:  # noqa: C901 – intentio
     # TIER 2b: IoC-based family routing (requires ≥ 20 letters)
     # -----------------------------------------------------------------------
 
+    # --- Scytale / stager_route: X-padded transposition --------------------
+    # These ciphers pad to fill a rectangular grid using null 'X' characters.
+    # X-inflation raises chi, breaking the low-chi transposition check below.
+    # Removing X's and testing chi of remaining letters reveals English dist.
+    x_freq = letters.count("X") / max(1, n_letters)
+    no_x_letters = letters.replace("X", "")
+    x_chi = chi_squared_for_english(no_x_letters) if len(no_x_letters) >= 15 else 999
+    if x_freq > 0.05 and x_chi < 80 and ioc >= 0.045:
+        # Very high X-frequency with English non-X letters → padded transposition.
+        return _deterministic("scytale", 0.48)
+
     # --- Transposition: English IoC + disrupted bigrams ---------------------
     # KEY INSIGHT: transposition ciphers keep English letter frequencies
     # (raw_chi LOW) while monoalphabetic raises chi (letters shift away from
