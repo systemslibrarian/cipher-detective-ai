@@ -5,7 +5,6 @@ import json
 import random
 import re
 from pathlib import Path
-from typing import Dict, List
 
 ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 AFFINE_A_VALUES = [1, 3, 5, 7, 9, 11, 15, 17, 19, 21, 23, 25]
@@ -13,7 +12,7 @@ AFFINE_A_VALUES = [1, 3, 5, 7, 9, 11, 15, 17, 19, 21, 23, 25]
 # ---------------------------------------------------------------------------
 # Attack-method and educational-note registries (extended for all new labels)
 # ---------------------------------------------------------------------------
-ATTACKS: Dict[str, List[str]] = {
+ATTACKS: dict[str, list[str]] = {
     "plaintext":             [],
     "caesar_rot":            ["brute_force_26", "frequency_analysis", "chi_squared_english"],
     "caesar":                ["brute_force_26", "frequency_analysis", "chi_squared_english"],
@@ -57,7 +56,7 @@ ATTACKS: Dict[str, List[str]] = {
     "zimmermann":            ["codebook_frequency", "number_group_analysis"],
 }
 
-EDU_NOTES: Dict[str, str] = {
+EDU_NOTES: dict[str, str] = {
     "plaintext":             "No cipher applied. Useful as a negative-class baseline.",
     "caesar_rot":            "Caesar / ROT-N: single-shift monoalphabetic with only 26 keys.",
     "caesar":                "Caesar / ROT-N: single-shift monoalphabetic with only 26 keys.",
@@ -392,7 +391,7 @@ def bacon_cipher_encode(text: str) -> str:
 
 
 # Polybius square: 5×5 grid (I=J), letters → row-col digit pair
-_POLYBIUS_GRID: Dict[str, str] = {}
+_POLYBIUS_GRID: dict[str, str] = {}
 _p_idx = 0
 for _ch in "ABCDEFGHIKLMNOPQRSTUVWXYZ":   # no J
     _POLYBIUS_GRID[_ch] = f"{_p_idx // 5 + 1}{_p_idx % 5 + 1}"
@@ -404,7 +403,7 @@ def polybius_encode(text: str) -> str:
 
 
 # Morse code: dots and dashes, word-separated by " / "
-_MORSE: Dict[str, str] = {
+_MORSE: dict[str, str] = {
     'A': '.-',   'B': '-...', 'C': '-.-.',  'D': '-..',  'E': '.',
     'F': '..-.',  'G': '--.',  'H': '....', 'I': '..',   'J': '.---',
     'K': '-.-',  'L': '.-..',  'M': '--',   'N': '-.',   'O': '---',
@@ -423,7 +422,7 @@ def morse_encode(text: str) -> str:
 
 # Tap code: letters as row.col dot-groups separated by double-space
 # 5×5 grid, K → C (no K row)
-_TAP: Dict[str, tuple] = {}
+_TAP: dict[str, tuple] = {}
 _t_idx = 0
 for _ch in "ABCDEFGHIJLMNOPQRSTUVWXYZ":   # no K
     _TAP[_ch] = (_t_idx // 5 + 1, _t_idx % 5 + 1)
@@ -446,14 +445,14 @@ def aeneas_tacticus_encode(text: str) -> str:
 # Wallis cipher: fixed shuffled 2-digit mapping (seeded for reproducibility)
 _wallis_nums = list(range(10, 100))
 random.Random(42).shuffle(_wallis_nums)
-_WALLIS_MAP: Dict[str, str] = {c: str(_wallis_nums[i]) for i, c in enumerate(ALPHABET)}
+_WALLIS_MAP: dict[str, str] = {c: str(_wallis_nums[i]) for i, c in enumerate(ALPHABET)}
 
 def wallis_cipher_encode(text: str) -> str:
     return " ".join(_WALLIS_MAP[c] for c in clean(text))
 
 
 # Homophonic substitution: common letters have multiple numeric homophones
-_HOMO_TABLE: Dict[str, List[int]] = {}
+_HOMO_TABLE: dict[str, list[int]] = {}
 _homo_pool = list(range(1, 100))
 random.Random(7).shuffle(_homo_pool)
 _homo_idx_ = 0
@@ -468,7 +467,7 @@ def homophonic_encode(text: str) -> str:
 
 # Culper Ring: ~3-digit numbers (800–998), 999 = word separator
 def culper_ring_encode(text: str) -> str:
-    groups: List[str] = []
+    groups: list[str] = []
     for word in text.upper().split():
         letters = re.sub(r'[^A-Z]', '', word)
         if not letters:
@@ -481,7 +480,7 @@ def culper_ring_encode(text: str) -> str:
 
 # Zimmermann Telegram style: 4–5 digit numeric groups
 def zimmermann_encode(text: str) -> str:
-    codes: List[str] = []
+    codes: list[str] = []
     for c in clean(text):
         base = (ALPHABET.index(c) + 1) * 314 + random.randint(0, 99)
         if random.random() < 0.5:
@@ -508,7 +507,7 @@ def arnold_andre_encode(text: str) -> str:
 
 
 # Babington nomenclator: ⟨wNN⟩ / ⟨aNN⟩ tokens
-_BABINGTON_MAP: Dict[str, str] = {
+_BABINGTON_MAP: dict[str, str] = {
     c: f"⟨{'w' if i % 2 == 0 else 'a'}{(i * 3 + 7) % 40 + 1:02d}⟩"
     for i, c in enumerate(ALPHABET)
 }
@@ -518,7 +517,7 @@ def babington_encode(text: str) -> str:
 
 
 # Navajo Code Talker
-_NAVAJO: Dict[str, str] = {
+_NAVAJO: dict[str, str] = {
     'A': 'WOL-LA-CHEE', 'B': 'SHUSH',         'C': 'MOASI',          'D': 'BE',
     'E': 'DZEH',        'F': 'MA-E',            'G': 'AH-JAH',         'H': 'LIN',
     'I': 'TKIN',        'J': 'TKELE-CHO-G',     'K': 'KLIZZIE',        'L': 'DIBEH-YAZZIE',
@@ -534,7 +533,7 @@ def navajo_encode(text: str) -> str:
 
 
 # Null / acrostic cipher: first letter of each word encodes message
-_ACROSTIC: Dict[str, List[str]] = {
+_ACROSTIC: dict[str, list[str]] = {
     'A': ['again','along','after','above','alert','among','array'],
     'B': ['below','brief','board','broad','basis','batch'],
     'C': ['could','clear','cover','cause','cross','carry','claim'],
@@ -575,7 +574,7 @@ _PIGPEN_SYMS = [
     'X', 'K', 'X·', 'K·',
     '⌒', '⌣', '⌒·', '⌣·',
 ]
-_PIGPEN_TABLE: Dict[str, str] = {ALPHABET[i]: _PIGPEN_SYMS[i % len(_PIGPEN_SYMS)] for i in range(26)}
+_PIGPEN_TABLE: dict[str, str] = {ALPHABET[i]: _PIGPEN_SYMS[i % len(_PIGPEN_SYMS)] for i in range(26)}
 
 def pigpen_encode(text: str) -> str:
     return " ".join(_PIGPEN_TABLE[c] for c in clean(text))
@@ -586,7 +585,7 @@ def commercial_code_encode(text: str) -> str:
     chars = clean(text)
     if not chars:
         chars = "HELLO"
-    groups: List[str] = []
+    groups: list[str] = []
     for i in range(0, len(chars), 5):
         chunk = list(chars[i:i + 5])
         while len(chunk) < 5:
@@ -650,8 +649,8 @@ def make_plain() -> str:
 # ---------------------------------------------------------------------------
 
 def record(
-    label: str, plaintext: str, ciphertext: str, meta: Dict[str, object], rid: int
-) -> Dict[str, object]:
+    label: str, plaintext: str, ciphertext: str, meta: dict[str, object], rid: int
+) -> dict[str, object]:
     text_clean = clean(ciphertext)
     # Symbolic/numeric ciphers (tap code, morse, polybius, book ciphers, etc.) lose their
     # distinctive format when passed through with_spacing()'s clean() branch.
@@ -704,7 +703,7 @@ _GRONSFELD_KEYS = ["314159", "271828", "141421", "31416", "27183", "11235", "999
 _PORTA_KEYS = ["KEY", "LIBRARY", "CIPHER", "SECURE", "PATTERN", "JUSTICE"]
 
 
-def build_row(label: str, rid: int) -> Dict[str, object]:  # noqa: C901
+def build_row(label: str, rid: int) -> dict[str, object]:  # noqa: C901
     plain = make_plain()
 
     if label in ("plaintext",):
@@ -887,7 +886,7 @@ def main() -> None:
     random.seed(args.seed)
 
     labels = args.labels or _SYNTH_LABELS
-    unknown = [l for l in labels if l not in _SYNTH_LABELS]
+    unknown = [lbl for lbl in labels if lbl not in _SYNTH_LABELS]
     if unknown:
         ap.error(f"Unknown labels (not implemented in synthetic generator): {unknown}")
 
