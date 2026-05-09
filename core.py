@@ -174,6 +174,24 @@ def vigenere_decrypt(text: str, key: str) -> str:
     return "".join(out)
 
 
+def beaufort_decrypt(text: str, key: str) -> str:
+    """Beaufort cipher decryption.  Beaufort is reciprocal: c = (k - p) mod 26,
+    so decryption uses the same operation: p = (k - c) mod 26."""
+    key = clean_letters(key)
+    if not key:
+        raise ValueError("key must contain at least one A-Z letter")
+    out, j = [], 0
+    for ch in text.upper():
+        if ch in ALPHABET:
+            k = ALPHABET.index(key[j % len(key)])
+            c = ALPHABET.index(ch)
+            out.append(ALPHABET[(k - c) % 26])
+            j += 1
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
 def substitution_encrypt(text: str, mapping: str) -> str:
     """Monoalphabetic substitution. ``mapping`` is a 26-letter permutation."""
     mapping = mapping.upper()
@@ -286,6 +304,87 @@ def best_affine_candidates(text: str, top_n: int = 5) -> list[tuple[int, int, fl
     return candidates[:top_n]
 
 
+def vigenere_auto_solve(
+    ciphertext: str,
+    max_key_len: int = 15,
+    top_n: int = 5,
+) -> list[tuple[str, str, float, int]]:
+    """Auto-solve a Vigenère cipher using Kasiski / Friedman key-length estimation
+    followed by per-column Caesar brute-force.
+
+    Returns up to ``top_n`` candidates as ``(key, plaintext, chi_sq, word_count)``
+    sorted best-first (most English words, then lowest chi-squared).
+    """
+    letters = clean_letters(ciphertext)
+    if len(letters) < 20:
+        return []
+
+    # Gather candidate key lengths from Kasiski + Friedman
+    kasiski = kasiski_key_lengths(letters, top=5)
+    fried = friedman_key_length(letters)
+
+    key_len_candidates: set[int] = set()
+    for k, _ in kasiski[:4]:
+        if 2 <= k <= max_key_len:
+            key_len_candidates.add(k)
+    if fried:
+        for f in {int(fried), round(int(fried + 0.5))}:  # floor and nearest int
+            if 2 <= f <= max_key_len:
+                key_len_candidates.add(f)
+    # Always try short lengths as a safety net
+    for k in range(2, min(9, max_key_len + 1)):
+        key_len_candidates.add(k)
+
+    results: list[tuple[str, str, float, int]] = []
+    seen_keys: set[str] = set()
+
+    for key_len in sorted(key_len_candidates):
+        # Split ciphertext letters into key_len interleaved streams
+        streams = [letters[i::key_len] for i in range(key_len)]
+        key_letters = []
+        for stream in streams:
+            # Find the Caesar shift (= key letter position) that minimises chi-squared
+            best_chi_col = float("inf")
+            best_s = 0
+            for s in range(26):
+                decoded_col = "".join(
+                    ALPHABET[(ALPHABET.index(c) - s) % 26] for c in stream
+                )
+                chi_col = chi_squared_for_english(decoded_col)
+                if chi_col < best_chi_col:
+                    best_chi_col = chi_col
+                    best_s = s
+            key_letters.append(ALPHABET[best_s])
+        key = "".join(key_letters)
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        plaintext = vigenere_decrypt(ciphertext, key)
+        plain_letters = clean_letters(plaintext)
+        chi = chi_squared_for_english(plain_letters)
+        ws = word_score(plaintext)
+        results.append((key, plaintext, chi, ws))
+
+    results.sort(key=lambda x: (-x[3], x[2]))
+    return results[:top_n]
+
+
+def playfair_double_score(letters: str) -> float:
+    """Return fraction of consecutive letter-pairs that are identical.
+
+    Playfair forbids encoding a pair with both letters the same (they would
+    be in the same row/column), so a genuine Playfair ciphertext has very
+    few or no identical consecutive-pair doubles.  English plaintext has
+    ~3.9% (1/26), Playfair should be ≈ 0%.
+    """
+    n = len(letters)
+    if n < 4:
+        return 0.0
+    pairs = [letters[i:i + 2] for i in range(0, n - 1, 2)]
+    doubles = sum(1 for p in pairs if len(p) == 2 and p[0] == p[1])
+    return doubles / max(len(pairs), 1)
+
+
 def friedman_key_length(letters: str) -> float:
     """Friedman estimate of Vigenère key length from the index of coincidence.
 
@@ -370,7 +469,58 @@ _BIGRAM_LOG_PROB: dict[str, float] = {
     "RO": -4.32, "IC": -4.35, "NE": -4.38, "EA": -4.40, "RA": -4.42, "CE": -4.45,
     "LI": -4.48, "CH": -4.50, "LL": -4.55, "BE": -4.58, "MA": -4.60, "SI": -4.62,
     "OM": -4.65, "UR": -4.68,
+    # Extended coverage — improves hill-climber gradient on mid-frequency pairs
+    "WH": -4.70, "WI": -4.72, "WA": -4.73, "TR": -4.74, "OW": -4.75, "OL": -4.76,
+    "LO": -4.77, "LA": -4.78, "GH": -4.79, "EL": -4.80, "EE": -4.82, "CA": -4.83,
+    "AC": -4.84, "AB": -4.86, "PR": -4.87, "PL": -4.88, "PE": -4.89, "PA": -4.90,
+    "NO": -4.91, "LY": -4.92, "IT": -3.72, "US": -4.94, "UN": -4.95, "TU": -4.96,
+    "SO": -4.97, "SH": -4.98, "SA": -4.99, "RU": -5.00, "RD": -5.01, "OT": -5.02,
+    "OO": -5.03, "OI": -5.05, "OA": -5.06, "NS": -5.07, "NA": -5.08, "MO": -5.09,
+    "MI": -5.10, "LT": -5.11, "IL": -5.12, "IF": -5.13, "GE": -5.14, "FR": -5.15,
+    "FI": -5.16, "EW": -5.17, "ET": -5.18, "EI": -5.19, "EF": -5.20, "EG": -5.21,
+    "EC": -5.22, "DI": -5.23, "CR": -5.24, "CT": -5.25, "CL": -5.26, "BY": -5.27,
+    "BU": -5.28, "BO": -5.29, "AY": -5.30, "AU": -5.31, "AM": -5.32, "AG": -5.33,
 }
+
+# Top-60 English trigram log10-probabilities (approximate; from known English corpora).
+# Unseen trigrams fall back to the sum of unigram log-probs.
+_TRIGRAM_LOG_PROB: dict[str, float] = {
+    "THE": -2.76, "AND": -3.10, "ING": -3.34, "ION": -3.37, "ENT": -3.42,
+    "TIO": -3.44, "FOR": -3.45, "HER": -3.48, "TER": -3.50, "THA": -3.52,
+    "HIS": -3.55, "ITH": -3.56, "ALL": -3.58, "TOR": -3.59, "INT": -3.60,
+    "ERS": -3.61, "NCE": -3.62, "MEN": -3.63, "ATE": -3.64, "ORT": -3.65,
+    "INE": -3.66, "STR": -3.67, "VER": -3.68, "OTH": -3.69, "ATI": -3.70,
+    "ERE": -3.71, "EDT": -3.72, "TED": -3.73, "ESS": -3.74, "HAT": -3.75,
+    "WIT": -3.76, "ARE": -3.77, "NOT": -3.78, "NDE": -3.79, "COM": -3.80,
+    "ONS": -3.81, "OUN": -3.82, "WAS": -3.83, "PRO": -3.84, "OVE": -3.85,
+    "OUR": -3.86, "HAV": -3.87, "AVE": -3.88, "ONE": -3.89, "HAN": -3.90,
+    "IVE": -3.91, "GET": -3.92, "AIN": -3.93, "EAR": -3.94, "IST": -3.95,
+    "EME": -3.96, "LLY": -3.97, "ALLY": -3.98, "RES": -3.99, "STA": -4.00,
+    "EAL": -4.01, "OFT": -4.02, "NTO": -4.03, "ACE": -4.04, "MAK": -4.05,
+}
+
+
+def english_trigram_score(letters: str) -> float:
+    """Mean log10-probability per trigram. Higher (less negative) = more English."""
+    if len(letters) < 3:
+        return -8.0
+    total = 0.0
+    trips = len(letters) - 2
+    for i in range(trips):
+        tg = letters[i:i + 3]
+        seen = _TRIGRAM_LOG_PROB.get(tg)
+        if seen is not None:
+            total += seen
+        else:
+            total += (
+                _UNIGRAM_LOG_PROB.get(tg[0], -3.0)
+                + _UNIGRAM_LOG_PROB.get(tg[1], -3.0)
+                + _UNIGRAM_LOG_PROB.get(tg[2], -3.0)
+                - 1.5
+            )
+    return total / trips
+
+
 # log10 of English letter frequency / 100 — used as a backoff for unseen bigrams.
 _UNIGRAM_LOG_PROB: dict[str, float] = {
     ch: math.log10(max(freq, 0.01) / 100.0) for ch, freq in ENGLISH_FREQ.items()
@@ -415,7 +565,7 @@ def hill_climb_substitution(
     restarts: int = 3,
     seed: int | None = 42,
 ) -> tuple[str, str, float]:
-    """Solve monoalphabetic substitution by hill climbing on bigram log-prob.
+    """Solve monoalphabetic substitution by hill climbing on trigram + bigram log-prob.
 
     Returns ``(plaintext_guess, key, score)``. ``key`` is a 26-letter string
     where ``key[i]`` is the plaintext letter for cipher letter ``ALPHABET[i]``.
@@ -438,8 +588,18 @@ def hill_climb_substitution(
     for cipher_letter, plain_letter in zip(observed, english_order, strict=False):
         seed_key[ALPHABET.index(cipher_letter)] = plain_letter
 
+    def _score(k: str) -> float:
+        dec = _apply_key(letters, k)
+        # Blend bigram + trigram scores: trigrams carry more discriminating power
+        # on longer texts but are noisier on short ones.
+        bg = english_bigram_score(dec)
+        if len(dec) >= 30:
+            tg = english_trigram_score(dec)
+            return 0.4 * bg + 0.6 * tg
+        return bg
+
     best_key = "".join(seed_key)
-    best_score = english_bigram_score(_apply_key(letters, best_key))
+    best_score = _score(best_key)
 
     for restart in range(max(1, restarts)):
         current = list(seed_key) if restart == 0 else list(best_key)
@@ -448,12 +608,12 @@ def hill_climb_substitution(
             for _ in range(2 + restart):
                 a, b = rng.sample(range(26), 2)
                 current[a], current[b] = current[b], current[a]
-        current_score = english_bigram_score(_apply_key(letters, "".join(current)))
+        current_score = _score("".join(current))
         no_improve = 0
         for _ in range(iterations):
             a, b = rng.sample(range(26), 2)
             current[a], current[b] = current[b], current[a]
-            score = english_bigram_score(_apply_key(letters, "".join(current)))
+            score = _score("".join(current))
             if score > current_score:
                 current_score = score
                 no_improve = 0
@@ -468,6 +628,76 @@ def hill_climb_substitution(
 
     plaintext = _apply_key(text.upper(), best_key)
     return plaintext, best_key, best_score
+
+
+def rail_fence_decrypt(text: str, rails: int) -> str:
+    """Reverse rail-fence transposition for a given number of rails."""
+    letters = clean_letters(text)
+    n = len(letters)
+    if rails < 2 or n == 0:
+        return letters
+    # Determine which rail each position belongs to
+    pattern = []
+    rail, direction = 0, 1
+    for _ in range(n):
+        pattern.append(rail)
+        if rail == 0:
+            direction = 1
+        elif rail == rails - 1:
+            direction = -1
+        rail += direction
+    # Build index map: original position → ciphertext read order
+    indices = sorted(range(n), key=lambda i: (pattern[i], i))
+    result = [""] * n
+    for ct_pos, orig_pos in enumerate(indices):
+        result[orig_pos] = letters[ct_pos]
+    return "".join(result)
+
+
+def best_rail_fence_candidates(text: str, max_rails: int = 15) -> list[tuple[int, str, float, int]]:
+    """Brute-force rail counts 2..max_rails, return best decodes sorted by English quality."""
+    candidates = []
+    for r in range(2, max_rails + 1):
+        decoded = rail_fence_decrypt(text, r)
+        chi = chi_squared_for_english(decoded)
+        ws = word_score(decoded)
+        candidates.append((r, decoded, chi, ws))
+    candidates.sort(key=lambda x: (-x[3], x[2]))
+    return candidates[:5]
+
+
+def columnar_transposition_decrypt(text: str, key: str) -> str:
+    """Reverse columnar transposition given a known keyword."""
+    letters = clean_letters(text)
+    key_letters = clean_letters(key)
+    if not key_letters or not letters:
+        return letters
+    cols = len(key_letters)
+    n = len(letters)
+    full_rows, remainder = divmod(n, cols)
+    order = sorted(range(cols), key=lambda i: (key_letters[i], i))
+    # Determine how many chars are in each column
+    col_lengths = [full_rows + (1 if rank < remainder else 0)
+                   for rank in [sorted(order).index(o) for o in order]]
+    col_lengths_by_order = [0] * cols
+    for rank, orig_col in enumerate(order):
+        col_lengths_by_order[orig_col] = full_rows + (1 if rank < remainder else 0)
+    # Read each column out of the ciphertext
+    columns: list[str] = []
+    pos = 0
+    for orig_col in range(cols):
+        length = col_lengths_by_order[orig_col]
+        columns.append(letters[pos:pos + length])
+        pos += length
+    # Reconstruct row by row
+    result = []
+    col_ptrs = [0] * cols
+    for _ in range(full_rows + (1 if remainder else 0)):
+        for c in range(cols):
+            if col_ptrs[c] < len(columns[c]):
+                result.append(columns[c][col_ptrs[c]])
+                col_ptrs[c] += 1
+    return "".join(result)
 
 
 def frequency_table(letters: str) -> list[tuple[str, int, float]]:

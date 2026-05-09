@@ -22,19 +22,23 @@ from core import (
     affine_encrypt,
     analyze_evidence,
     atbash,
+    beaufort_decrypt,
     best_affine_candidates,
     best_caesar_candidates,
+    best_rail_fence_candidates,
     build_explanation,
     caesar_encrypt,
     caesar_shift,
     chi_squared_for_english,
     clean_letters,
+    columnar_transposition_decrypt,
     columnar_transposition_encrypt,
     heuristic_classify,
     hill_climb_substitution,
     rail_fence_encrypt,
     shannon_entropy,
     substitution_encrypt,
+    vigenere_auto_solve,
     vigenere_decrypt,
     vigenere_encrypt,
     word_score,
@@ -327,7 +331,18 @@ def explain_only(ciphertext: str) -> str:
     return "\n".join(lines)
 
 
-DECODE_METHODS = ["caesar_rot", "atbash", "vigenere", "affine", "auto-best-caesar", "auto-best-affine"]
+DECODE_METHODS = [
+    "auto-best-caesar",
+    "auto-best-affine",
+    "auto-vigenere",
+    "auto-rail-fence",
+    "caesar_rot",
+    "atbash",
+    "vigenere",
+    "beaufort",
+    "affine",
+    "columnar",
+]
 
 
 def try_decode(ciphertext: str, method: str, key_text: str) -> tuple[str, str]:
@@ -352,6 +367,22 @@ def try_decode(ciphertext: str, method: str, key_text: str) -> tuple[str, str]:
         for a, b, chi, score, decoded in cands:
             lines.append(f"| {a} | {b} | {score} | {chi:.1f} | `{decoded[:60]}` |")
         return "\n".join(lines), "_Brute-forced all 312 valid Affine keys (a coprime to 26), ranked by English-word matches._"
+
+    if method == "auto-vigenere":
+        cands = vigenere_auto_solve(ciphertext, max_key_len=15, top_n=5)
+        if not cands:
+            return "_Need at least 20 letters for Vigenère auto-solve._", ""
+        lines = ["### Auto Vigenère results", "| Key | Word clues | Chi² | Plaintext preview |", "|---|---:|---:|---|"]
+        for key, plaintext, chi, ws in cands:
+            lines.append(f"| `{key}` | {ws} | {chi:.1f} | `{clean_letters(plaintext)[:65]}` |")
+        return "\n".join(lines), "_Kasiski + Friedman key-length estimation, then per-column Caesar on each key position._"
+
+    if method == "auto-rail-fence":
+        cands = best_rail_fence_candidates(ciphertext, max_rails=15)
+        lines = ["### Auto rail-fence results", "| Rails | Word clues | Chi² | Plaintext |", "|---:|---:|---:|---|"]
+        for rails, decoded, chi, ws in cands:
+            lines.append(f"| {rails} | {ws} | {chi:.1f} | `{decoded[:70]}` |")
+        return "\n".join(lines), "_Brute-forced rail counts 2–15, ranked by English-word matches then chi-squared._"
 
     if method == "atbash":
         result = atbash(ciphertext)
@@ -378,6 +409,16 @@ def try_decode(ciphertext: str, method: str, key_text: str) -> tuple[str, str]:
         except ValueError as exc:
             return f"_Error: {exc}_", ""
 
+    elif method == "beaufort":
+        key_clean = clean_letters(key_text)
+        if not key_clean:
+            return "_Key must contain at least one A–Z letter for Beaufort._", ""
+        try:
+            result = beaufort_decrypt(ciphertext, key_clean)
+            note = f"Beaufort decrypted with key `{key_clean}` (reciprocal cipher — same op encrypts and decrypts)."
+        except ValueError as exc:
+            return f"_Error: {exc}_", ""
+
     elif method == "affine":
         parts = [p.strip() for p in key_text.replace(",", " ").split()]
         if len(parts) != 2 or not all(p.lstrip("-").isdigit() for p in parts):
@@ -388,6 +429,13 @@ def try_decode(ciphertext: str, method: str, key_text: str) -> tuple[str, str]:
             note = f"Affine decrypted with a={a}, b={b}."
         except ValueError as exc:
             return f"_Error: {exc}_", ""
+
+    elif method == "columnar":
+        key_clean = clean_letters(key_text)
+        if not key_clean:
+            return "_Key must contain at least one A–Z letter for columnar transposition._", ""
+        result = columnar_transposition_decrypt(ciphertext, key_clean)
+        note = f"Columnar transposition decrypted with key `{key_clean}`."
 
     rletters = clean_letters(result)
     chi = chi_squared_for_english(rletters) if rletters else float("inf")
@@ -625,9 +673,9 @@ The classifier can tell you <em>which family</em> your ciphertext belongs to. Re
                 )
                 decode_key = gr.Textbox(
                     label="Key (where required)",
-                    placeholder="Caesar: shift 0–25 or letter | Vigenère: word | Affine: a b",
+                    placeholder="Caesar: 0–25 | Vigenère/Beaufort: word | Affine: a b | Columnar: keyword",
                     lines=1,
-                    info="Number for Caesar, word for Vigenère, two ints (a b) for Affine. Leave blank for auto / Atbash.",
+                    info="Leave blank for auto-* and Atbash methods. Caesar: number or letter. Affine: two integers e.g. '5 8'. Vigenère/Beaufort/Columnar: a word.",
                 )
                 decode_btn = gr.Button("Decode", variant="primary", elem_id="decode-btn")
         decode_out = gr.Markdown(label="Decoded result + quality check")
