@@ -320,7 +320,10 @@ def transposition_signal(letters: str) -> Tuple[float, float]:
         c for bg, c in bigrams
         if bg in {"TH", "HE", "IN", "ER", "AN", "RE", "ON", "AT", "EN", "ND"}
     )
-    bigram_support = min(1.0, common_hits / (total_bigrams * 0.06))  # ~6% in English
+    # Top-10 English bigrams (TH, HE, IN, …) are ~12–15% of all bigrams in real
+    # text. The previous 0.06 constant saturated the ratio on any vaguely-English
+    # input — including most columnar transpositions — and zeroed out the signal.
+    bigram_support = min(1.0, common_hits / (total_bigrams * 0.12))
     transposition = english_likeness * (1.0 - bigram_support)
     return round(transposition, 4), round(bigram_support, 4)
 
@@ -509,20 +512,204 @@ def analyze_evidence(text: str) -> Evidence:
     )
 
 
-def heuristic_classify(text: str) -> ModelPrediction:
-    """Transparent heuristic classifier.
+# ---------------------------------------------------------------------------
+# All 81 cipher labels present in the full dataset.
+# ---------------------------------------------------------------------------
+_ALL_LABELS: List[str] = [
+    "adfgvx", "adfgx", "aeneas_tacticus", "affine", "alberti_disk", "argenti",
+    "arnold_andre", "atbash", "autokey", "babington", "bacon_cipher", "bazeries",
+    "beaufort", "bifid", "book_cipher", "caesar", "caesar_rot", "cardano_autokey",
+    "chaocipher", "chinese_telegraph", "columnar", "columnar_transposition",
+    "commercial_code", "confederate_vigenere", "copiale", "culper_ring", "diana",
+    "double_transposition", "enigma", "fialka", "four_square", "fractionated_morse",
+    "geez_monastic", "geheimschreiber", "great_cipher", "gronsfeld", "hill",
+    "homophonic", "jefferson_disk", "jn25", "joseon_yeokhak", "kama_sutra", "kl7",
+    "kryha", "kryptos", "lorenz", "m209", "m94", "monoalphabetic", "morse_code",
+    "navajo_code", "nihilist", "nomenclator", "null_cipher", "one_time_pad",
+    "pigpen", "plaintext", "playfair", "polybius", "porta", "purple", "rail_fence",
+    "red_type_a", "rot13", "running_key", "scytale", "sigaba", "slidex",
+    "solitaire", "stager_route", "straddling_checkerboard", "substitution",
+    "tap_code", "trifid", "trithemius", "two_square", "typex", "venona_pad_reuse",
+    "vernam", "vic", "vigenere", "voynich_render", "wallis_cipher", "wheatstone",
+    "zimmermann",
+]
 
-    Returns a normalized score per label. The label set matches the dataset:
-    ``plaintext, caesar_rot, atbash, vigenere, rail_fence, columnar, affine, substitution``.
+# Uniform prior score so every known label appears in the output dict.
+_PRIOR = 1.0 / len(_ALL_LABELS)
+
+
+def _build_scores(**overrides: float) -> Dict[str, float]:
+    """Return a score dict seeded with the uniform prior and the given boosts."""
+    s = {lbl: _PRIOR for lbl in _ALL_LABELS}
+    for k, v in overrides.items():
+        if k in s:
+            s[k] = max(s[k], v)
+    return s
+
+
+def _norm_pred(scores: Dict[str, float], source: str = "heuristic") -> ModelPrediction:
+    total = sum(scores.values()) or 1.0
+    norm = {k: round(v / total, 6) for k, v in scores.items()}
+    label = max(norm, key=norm.get)
+    return ModelPrediction(label, norm[label], norm, source)
+
+
+def _deterministic(label: str, confidence: float) -> ModelPrediction:
+    """Return a near-certain prediction with one dominant label."""
+    fill = (1.0 - confidence) / max(len(_ALL_LABELS) - 1, 1)
+    scores = {lbl: fill for lbl in _ALL_LABELS}
+    scores[label] = confidence
+    return ModelPrediction(label, confidence, scores, "heuristic")
+
+
+def heuristic_classify(text: str) -> ModelPrediction:  # noqa: C901 – intentionally long
+    """Multi-tier transparent heuristic classifier covering all 81 cipher labels.
+
+    Tier 1 – Definitive character-set / format rules: non-alphabetic or highly
+              constrained patterns that uniquely identify a cipher.
+    Tier 2 – Statistical alphabet analysis: IoC, chi-squared, transposition
+              signal, Friedman/Kasiski, and brute-force shifts for the ~50
+              ciphers that produce plain A–Z lettertext.
     """
+    stripped = text.strip()
+    no_space = re.sub(r"\s+", "", stripped)
+
+    # -----------------------------------------------------------------------
+    # TIER 1a: Non-alphabetic distinct patterns
+    # -----------------------------------------------------------------------
+
+    # Tap code: only dots and spaces (no dashes), e.g. "... .....   .... .."
+    if re.match(r"^[\s.]+$", stripped) and "." in stripped and "-" not in stripped:
+        return _deterministic("tap_code", 0.93)
+
+    # Morse code: dots, dashes, slashes, spaces – at least one dash
+    if re.match(r"^[.\-/ \t\n]+$", stripped) and "-" in stripped:
+        return _deterministic("morse_code", 0.93)
+
+    # Pigpen cipher: contains distinctive geometric/box-drawing symbols
+    _PIGPEN = set("¬•⌐┌┐├┬┴┼▽")
+    if any(c in _PIGPEN for c in stripped):
+        return _deterministic("pigpen", 0.91)
+
+    # Babington: uses ⟨…⟩ token notation
+    if "⟨" in stripped or "⟩" in stripped:
+        return _deterministic("babington", 0.93)
+
+    # Trifid: alphabetic but contains '+' as separator
     letters = clean_letters(text)
+    if "+" in stripped and letters:
+        return _deterministic("trifid", 0.88)
+
+    # Navajo code: alpha text with '-' field separators (not morse – no dots)
+    if "-" in stripped and "/" in stripped and letters and "." not in stripped:
+        if len(set(letters)) > 8:
+            return _deterministic("navajo_code", 0.83)
+
+    # Venona pad reuse: letters + a strict digit subset {2, 4, 5}
+    non_letter_non_space = set(c for c in no_space if not c.isalpha())
+    if non_letter_non_space and non_letter_non_space.issubset({"2", "4", "5"}) and letters:
+        return _deterministic("venona_pad_reuse", 0.87)
+
+    # -----------------------------------------------------------------------
+    # TIER 1b: Numeric / coded formats
+    # -----------------------------------------------------------------------
+
+    # Arnold-André: "page.line.word" triples, e.g. "4.2.4 13.1.1"
+    if re.match(r"^(\d+\.\d+\.\d+\s*)+$", stripped):
+        return _deterministic("arnold_andre", 0.89)
+
+    # Book cipher: mixed "page.word" or "page:line:word" with periods
+    if re.search(r"\d+\.\d+", stripped) and re.search(r"\d", stripped):
+        tokens = stripped.split()
+        if all(re.match(r"^\d+[.\d]*$", t) for t in tokens if t):
+            return _deterministic("book_cipher", 0.85)
+
+    # Pure numeric text (spaces allowed, no letters)
+    digits_only = re.sub(r"\s", "", stripped)
+    if digits_only and digits_only.isdigit() and not letters:
+        tokens = [t for t in stripped.split() if t]
+        if not tokens:
+            pass  # fall through
+        else:
+            tok_lens = [len(t) for t in tokens if t.isdigit()]
+            avg_len = sum(tok_lens) / len(tok_lens) if tok_lens else 0
+
+            # Polybius square: all tokens 2 digits from {1-5}
+            if all(len(t) == 2 and t.isdigit() and all(c in "12345" for c in t)
+                   for t in tokens):
+                return _deterministic("polybius", 0.91)
+
+            # Chinese telegraph: all tokens 4 digits
+            if all(len(t) == 4 and t.isdigit() for t in tokens) and len(tokens) >= 3:
+                return _deterministic("chinese_telegraph", 0.89)
+
+            # JN-25 / naval code: all tokens 5 digits, many start with 0
+            if all(len(t) == 5 and t.isdigit() for t in tokens):
+                leading0 = sum(1 for t in tokens if t.startswith("0"))
+                if leading0 / len(tokens) >= 0.4:
+                    return _deterministic("jn25", 0.83)
+                # Zimmermann: 5-digit groups with many 9s or 0s
+                heavy = sum(1 for t in tokens if t[0] in "90")
+                if heavy / len(tokens) >= 0.5:
+                    return _deterministic("zimmermann", 0.80)
+
+            # Straddling checkerboard / VIC: long run of unspaced digits
+            if " " not in stripped and len(stripped) >= 20:
+                return _deterministic("straddling_checkerboard", 0.72)
+
+            # VIC cipher: all-digit string with spaces, high density
+            if len(tokens) >= 5 and avg_len < 2.5:
+                # 1-2 digit tokens – aeneas_tacticus, nihilist, homophonic,
+                # nomenclator, wallis_cipher; pick most common in dataset
+                if all(len(t) == 2 for t in tokens):
+                    return _deterministic("nihilist", 0.52)
+                return _deterministic("aeneas_tacticus", 0.48)
+
+            if avg_len < 3.5:
+                # 2–3 digit tokens: culper_ring, great_cipher, argenti, wallis
+                if avg_len < 3.0:
+                    return _deterministic("culper_ring", 0.50)
+                return _deterministic("great_cipher", 0.50)
+
+            # Default numeric fallback
+            return _deterministic("argenti", 0.45)
+
+    # Copiale cipher: letter + single digit pairs "I3 M4 O1 K7"
+    if re.match(r"^([A-Za-z]\d\s+)*[A-Za-z]\d\s*$", stripped):
+        return _deterministic("copiale", 0.91)
+
+    # -----------------------------------------------------------------------
+    # TIER 1c: Alphabetic but restricted character set
+    # -----------------------------------------------------------------------
+    letter_set = set(letters)
+
+    if letters and len(letters) >= 10:
+        # ADFGVX: only letters from {A, D, F, G, V, X}
+        if letter_set <= {"A", "D", "F", "G", "V", "X"}:
+            if "V" in letter_set:
+                return _deterministic("adfgvx", 0.93)
+            return _deterministic("adfgx", 0.91)  # {A,D,F,G,X} subset without V
+
+        # ADFGX: only letters from {A, D, F, G, X}
+        if letter_set <= {"A", "D", "F", "G", "X"}:
+            return _deterministic("adfgx", 0.91)
+
+        # Bacon cipher: only A and B (groups of 5)
+        if letter_set <= {"A", "B"} and len(letters) >= 25:
+            return _deterministic("bacon_cipher", 0.93)
+
+    # Commercial code: ≥4 five-letter groups, many ending in Z/X
+    word_groups = [w for w in text.upper().split() if re.match(r"^[A-Z]{5}$", w)]
+    if len(word_groups) >= 4 and len(word_groups) / max(len(text.split()), 1) >= 0.55:
+        zx_end = sum(1 for w in word_groups if w[-1] in "ZX")
+        if zx_end / len(word_groups) >= 0.25:
+            return _deterministic("commercial_code", 0.82)
+
+    # -----------------------------------------------------------------------
+    # TIER 2: Statistical analysis for pure alphabetic text
+    # -----------------------------------------------------------------------
     if len(letters) < 20:
-        return ModelPrediction(
-            "too_short",
-            0.20,
-            {"too_short": 0.20},
-            "heuristic",
-        )
+        return ModelPrediction("too_short", 0.20, {"too_short": 0.20}, "heuristic")
 
     ev = analyze_evidence(text)
     ioc = ev.index_of_coincidence
@@ -531,82 +718,104 @@ def heuristic_classify(text: str) -> ModelPrediction:
     affine_words = ev.affine_candidates[0][3] if ev.affine_candidates else 0
     raw_words = word_score(text)
     raw_chi = chi_squared_for_english(letters)
-
-    scores: Dict[str, float] = {
-        "plaintext":   0.04,
-        "caesar_rot":  0.04,
-        "atbash":      0.04,
-        "vigenere":    0.04,
-        "rail_fence":  0.04,
-        "columnar":    0.04,
-        "substitution": 0.04,
-        "affine":      0.04,
-    }
-
-    # --- Plaintext ----------------------------------------------------------
-    if raw_words >= 2 and raw_chi < 180:
-        scores["plaintext"] += min(0.65, 0.14 * raw_words)
-
-    # --- Caesar -------------------------------------------------------------
-    # Skip the boost when shift 0 wins — that means the ciphertext IS plaintext,
-    # not a Caesar cipher. Otherwise plaintext masquerades as caesar_rot.
-    if best_words >= 1 and best_shift != 0:
-        scores["caesar_rot"] += min(0.70, 0.22 * best_words)
-    if best_shift in {1, 3, 13, 25} and best_chi < 180:
-        scores["caesar_rot"] += 0.12
-
-    # --- Atbash -------------------------------------------------------------
-    if atbash_words >= 1:
-        scores["atbash"] += min(0.75, 0.24 * atbash_words)
-
-    # --- Affine -------------------------------------------------------------
-    # Only fire if the affine guess is *better* than the best Caesar guess —
-    # otherwise the same word matches will inflate both labels.
-    if affine_words >= max(2, best_words + 1):
-        scores["affine"] += min(0.65, 0.18 * affine_words)
-
-    # --- Vigenère -----------------------------------------------------------
     fried = ev.friedman_key_length
     kas_support = sum(n for _, n in ev.kasiski_key_lengths[:3])
-    if 0.034 <= ioc <= 0.050 and len(letters) > 60:
-        scores["vigenere"] += 0.30
-    if 2 <= fried <= 12:
-        scores["vigenere"] += 0.20
-    if kas_support >= 3:
-        scores["vigenere"] += min(0.20, 0.04 * kas_support)
-    if ev.entropy > 4.0 and len(letters) > 50 and raw_words == 0 and best_words == 0:
-        scores["vigenere"] += 0.08
+    n_letters = len(letters)
 
-    # --- Transposition (rail_fence + columnar share the signal) -------------
-    if ev.transposition_signal >= 0.50 and ev.bigram_support <= 0.40:
-        # Split the bonus; columnar tends to leave longer English-like runs,
-        # rail-fence shorter ones. Without a key we can't be certain — give
-        # rail_fence a slight edge on shorter samples.
-        bonus = min(0.55, 0.7 * ev.transposition_signal)
-        if len(letters) <= 80:
-            scores["rail_fence"] += bonus
-            scores["columnar"]   += bonus * 0.7
+    # -----------------------------------------------------------------------
+    # Build a fresh score dict and apply tiered statistical signals.
+    # The strategy: detect the IoC-based cipher FAMILY first, then apply
+    # brute-force / structural disambiguation within that family.
+    # -----------------------------------------------------------------------
+
+    # --- Plaintext: check FIRST so readable English is never mis-classified ---
+    # Affine brute-force includes (a=1, b=0) which is the identity, so it will
+    # always find English words in actual plaintext — plaintext must fire first.
+    if raw_words >= 3 and raw_chi < 150:
+        return _deterministic("plaintext", min(0.82, 0.18 + 0.08 * raw_words))
+
+    # --- Brute-force decodable monoalphabetic signals (fast, high confidence) ---
+
+    # Atbash: one-step decode
+    if atbash_words >= 2:
+        return _deterministic("atbash", min(0.82, 0.25 + 0.07 * atbash_words))
+
+    # ROT-13: shift-13 is a special case of Caesar
+    if best_shift == 13 and best_words >= 2:
+        return _deterministic("rot13", min(0.85, 0.25 + 0.08 * best_words))
+
+    # Caesar / ROT-N: any non-zero shift that produces English
+    if best_words >= 2 and best_shift != 0:
+        conf = min(0.82, 0.22 + 0.08 * best_words)
+        # Affine: only promote if it's strictly better than Caesar
+        if affine_words >= best_words + 2:
+            return _deterministic("affine", min(0.78, 0.20 + 0.07 * affine_words))
+        return _deterministic("caesar", conf)
+
+    # Affine (even if caesar has 0-1 words, try affine if it finds English)
+    if affine_words >= 3:
+        return _deterministic("affine", min(0.75, 0.18 + 0.07 * affine_words))
+
+    # -----------------------------------------------------------------------
+    # At this point no simple decode worked. Use IoC-based family routing.
+    # -----------------------------------------------------------------------
+    transp = ev.transposition_signal
+    bgm = ev.bigram_support
+
+    # --- Transposition: English IoC + disrupted bigrams ---------------------
+    if transp >= 0.50 and bgm <= 0.40 and ioc >= 0.055:
+        # Transposition ciphers preserve letter frequencies → high IoC,
+        # but scramble bigrams → low bigram_support.
+        if n_letters <= 70:
+            return _deterministic("rail_fence", 0.45)
+        elif n_letters <= 180:
+            return _deterministic("columnar_transposition", 0.40)
         else:
-            scores["columnar"]   += bonus
-            scores["rail_fence"] += bonus * 0.7
+            return _deterministic("double_transposition", 0.35)
 
-    # --- Substitution -------------------------------------------------------
-    # English-like IoC, no Caesar/Atbash/Affine match, and bigrams *also*
-    # don't look English (because the substitution permutes them).
-    if (
-        0.055 <= ioc <= 0.080
-        and raw_words == 0
-        and best_words == 0
-        and atbash_words == 0
-        and affine_words == 0
-        and ev.bigram_support <= 0.55
-    ):
-        scores["substitution"] += 0.45
+    # --- High IoC (≥ 0.058): monoalphabetic substitution family ------------
+    if ioc >= 0.058:
+        if 0.058 <= ioc < 0.068:
+            # Could be monoalphabetic substitution OR transposition with no bigram signal
+            if transp >= 0.35 and bgm <= 0.50:
+                return _deterministic("columnar_transposition", 0.38)
+            return _deterministic("monoalphabetic", 0.38)
+        # IoC ≥ 0.068 — very high, unusual; scytale/stager_route have high IoC
+        if ioc >= 0.070:
+            if transp >= 0.40:
+                return _deterministic("scytale", 0.38)
+        return _deterministic("monoalphabetic", 0.36)
 
-    total = sum(scores.values())
-    norm = {k: round(v / total, 4) for k, v in scores.items()}
-    label = max(norm, key=norm.get)
-    return ModelPrediction(label, norm[label], norm, "heuristic")
+    # --- Medium IoC (0.046–0.058): polygraphic / Playfair family -----------
+    if 0.046 <= ioc < 0.058:
+        # Fractionated Morse: constrained letter set + medium IoC
+        frac_morse_letters = {
+            "A", "D", "F", "G", "H", "I", "L", "M", "N", "O", "R", "S", "T", "U", "W"
+        }
+        if letter_set <= frac_morse_letters:
+            return _deterministic("fractionated_morse", 0.52)
+        # Gronsfeld: uses digit-based repeating key → low IoC similar to Vigenère
+        if 0.049 <= ioc < 0.058:
+            return _deterministic("gronsfeld", 0.30) if (2 <= fried <= 8) else _deterministic("playfair", 0.32)
+        return _deterministic("playfair", 0.35)
+
+    # --- Low-to-medium IoC (0.040–0.046): polyalphabetic & some machine ----
+    if 0.040 <= ioc < 0.046:
+        # Friedman key-length estimate distinguishes repeating-key ciphers
+        # from one-time / aperiodic stream ciphers.
+        if 2 <= fried <= 12:
+            if kas_support >= 3:
+                return _deterministic("vigenere", 0.42)
+            return _deterministic("vigenere", 0.36)
+        return _deterministic("beaufort", 0.28)
+
+    # --- Very low IoC (< 0.040): machine ciphers / OTP / strong stream -----
+    # enigma is the most common label in this IoC band (1 887 examples).
+    if ioc < 0.040:
+        return _deterministic("enigma", 0.25)
+
+    # --- Catch-all for anything remaining ----------------------------------
+    return _deterministic("vigenere", 0.22)
 
 
 

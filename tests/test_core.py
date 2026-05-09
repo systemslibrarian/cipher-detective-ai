@@ -215,7 +215,8 @@ def test_heuristic_handles_nonalpha_input():
 def test_heuristic_caesar_label():
     plain = "THE LIBRARY PRESERVES KNOWLEDGE FOR THE COMMUNITY"
     pred = heuristic_classify(caesar_encrypt(plain, 5))
-    assert pred.label == "caesar_rot"
+    # Both "caesar" and "caesar_rot" are valid labels for the same cipher.
+    assert pred.label in {"caesar", "caesar_rot"}
 
 
 def test_heuristic_atbash_label():
@@ -314,9 +315,13 @@ REQUIRED_KEYS = {
     "difficulty", "language", "text_length", "length", "attack_methods",
     "educational_note", "source",
 }
+# All labels that the synthetic generator can produce (see _SYNTH_LABELS in generate_dataset.py).
 ALLOWED_LABELS = {
-    "plaintext", "caesar_rot", "atbash", "vigenere",
-    "rail_fence", "columnar", "affine", "substitution",
+    "plaintext", "caesar_rot", "caesar", "rot13", "atbash", "affine",
+    "substitution", "monoalphabetic",
+    "vigenere", "beaufort", "gronsfeld", "autokey", "trithemius", "porta",
+    "rail_fence", "columnar", "columnar_transposition",
+    "scytale", "double_transposition", "stager_route",
 }
 
 
