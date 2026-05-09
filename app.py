@@ -543,8 +543,8 @@ with gr.Blocks(title="Cipher Detective AI", css=BRAND_CSS) as demo:
                     label="Try an example",
                 )
             with gr.Column(scale=1):
-                scores = gr.Markdown(label="Confidence scores", container=True)
-        report = gr.Markdown(label="Detective report", container=True)
+                scores = gr.Markdown(label="Confidence scores")
+        report = gr.Markdown(label="Detective report")
         # Accept Enter key from the textbox and the click button.
         ciphertext.submit(detective_mode, inputs=[ciphertext], outputs=[report, scores])
         analyze_btn.click(detective_mode, inputs=[ciphertext], outputs=[report, scores])
@@ -557,7 +557,7 @@ with gr.Blocks(title="Cipher Detective AI", css=BRAND_CSS) as demo:
             placeholder="Paste any ciphertext to examine the evidence...",
         )
         explain_btn = gr.Button("Show evidence notebook", elem_id="explain-btn")
-        explain_out = gr.Markdown(label="Evidence notebook", container=True)
+        explain_out = gr.Markdown(label="Evidence notebook")
         explain_input.submit(explain_only, inputs=[explain_input], outputs=[explain_out])
         explain_btn.click(explain_only, inputs=[explain_input], outputs=[explain_out])
 
@@ -617,8 +617,8 @@ with gr.Blocks(title="Cipher Detective AI", css=BRAND_CSS) as demo:
                     info="Number for Caesar, word for Vigenère, two ints (a b) for Affine. Leave blank for auto / Atbash.",
                 )
                 decode_btn = gr.Button("Decode", variant="primary", elem_id="decode-btn")
-        decode_out = gr.Markdown(label="Decoded result + quality check", container=True)
-        decode_note = gr.Markdown(label="Method note", container=True)
+        decode_out = gr.Markdown(label="Decoded result + quality check")
+        decode_note = gr.Markdown(label="Method note")
         decode_btn.click(try_decode, inputs=[decode_input, decode_method, decode_key], outputs=[decode_out, decode_note])
 
     with gr.Tab("Compare Mode"):
@@ -634,9 +634,9 @@ with gr.Blocks(title="Cipher Detective AI", css=BRAND_CSS) as demo:
         )
         compare_btn = gr.Button("Compare methods", variant="primary", elem_id="compare-btn")
         with gr.Row():
-            heur_out = gr.Markdown(label="Heuristic baseline", container=True)
-            ml_out = gr.Markdown(label="Transformer classifier", container=True)
-        agreement_out = gr.Markdown(label="Agreement summary", container=True)
+            heur_out = gr.Markdown(label="Heuristic baseline")
+            ml_out = gr.Markdown(label="Transformer classifier")
+        agreement_out = gr.Markdown(label="Agreement summary")
         compare_input.submit(compare_modes, inputs=[compare_input], outputs=[heur_out, ml_out, agreement_out])
         compare_btn.click(compare_modes, inputs=[compare_input], outputs=[heur_out, ml_out, agreement_out])
 
@@ -670,8 +670,8 @@ with gr.Blocks(title="Cipher Detective AI", css=BRAND_CSS) as demo:
                     variant="primary",
                     elem_id="solve-btn",
                 )
-        solve_out = gr.Markdown(label="Recovered plaintext + key", container=True)
-        solve_note = gr.Markdown(label="Method note", container=True)
+        solve_out = gr.Markdown(label="Recovered plaintext + key")
+        solve_note = gr.Markdown(label="Method note")
         solve_btn.click(
             solve_substitution,
             inputs=[solve_input, iters, restarts],
