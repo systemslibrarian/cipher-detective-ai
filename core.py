@@ -610,6 +610,23 @@ def heuristic_classify(text: str) -> ModelPrediction:  # noqa: C901 – intentio
     if non_letter_non_space and non_letter_non_space.issubset({"2", "4", "5"}) and letters:
         return _deterministic("venona_pad_reuse", 0.87)
 
+    # Voynich manuscript: predominantly lowercase, short pseudo-syllabic tokens,
+    # no uppercase (most other ciphers are uppercase).  Check before letter extraction.
+    _voynich_words = {"oror", "oxed", "otol", "chedy", "shedy", "dainy", "otaiin",
+                      "cheol", "raiin", "aiiin", "chol", "chor", "daral", "shal",
+                      "daiin", "chedal", "sheedy", "okedy", "otain", "qokedy",
+                      "okain", "shaiin", "sharal", "okal", "okshy"}
+    if stripped and stripped[0].islower():   # quick gate: ciphertext is lowercase
+        lc_words = set(re.findall(r"[a-z]+", stripped.lower()))
+        if len(lc_words) >= 3 and lc_words & _voynich_words:
+            return _deterministic("voynich_render", 0.85)
+        # Even without exact word matches, a fully-lowercase alpha-space text
+        # that isn't English is likely voynich render in our dataset.
+        if all(c.islower() or c == " " for c in stripped) and len(stripped) > 8:
+            # Check it's not just garbled English (null cipher)
+            if word_score(stripped) < 2:
+                return _deterministic("voynich_render", 0.72)
+
     # -----------------------------------------------------------------------
     # TIER 1b: Numeric / coded formats
     # -----------------------------------------------------------------------
@@ -633,6 +650,7 @@ def heuristic_classify(text: str) -> ModelPrediction:  # noqa: C901 – intentio
         else:
             tok_lens = [len(t) for t in tokens if t.isdigit()]
             avg_len = sum(tok_lens) / len(tok_lens) if tok_lens else 0
+            nums = [int(t) for t in tokens if t.isdigit()]
 
             # Polybius square: all tokens 2 digits from {1-5}
             if all(len(t) == 2 and t.isdigit() and all(c in "12345" for c in t)
@@ -653,22 +671,68 @@ def heuristic_classify(text: str) -> ModelPrediction:  # noqa: C901 – intentio
                 if heavy / len(tokens) >= 0.5:
                     return _deterministic("zimmermann", 0.80)
 
+            # Culper Ring: 3-digit tokens overwhelmingly in the 800–999 range
+            # (999 used as word separator, other tokens are letter codes 800–998)
+            if all(len(t) == 3 for t in tokens if t.isdigit()):
+                in_range = sum(1 for n in nums if 800 <= n <= 999)
+                if len(nums) > 0 and in_range / len(nums) >= 0.70:
+                    return _deterministic("culper_ring", 0.85)
+
             # Straddling checkerboard / VIC: long run of unspaced digits
-            if " " not in stripped and len(stripped) >= 20:
+            # VIC tends to be longer and more uniform than straddling_checkerboard
+            if " " not in stripped and len(stripped) >= 10:
+                if len(stripped) >= 35:
+                    return _deterministic("vic", 0.70)
                 return _deterministic("straddling_checkerboard", 0.72)
 
-            # VIC cipher: all-digit string with spaces, high density
-            if len(tokens) >= 5 and avg_len < 2.5:
-                # 1-2 digit tokens – aeneas_tacticus, nihilist, homophonic,
-                # nomenclator, wallis_cipher; pick most common in dataset
-                if all(len(t) == 2 for t in tokens):
-                    return _deterministic("nihilist", 0.52)
-                return _deterministic("aeneas_tacticus", 0.48)
+            # 2-digit token ciphers — distinguish by value range
+            if all(len(t) == 2 for t in tokens) and len(tokens) >= 4:
+                low_26 = sum(1 for n in nums if 1 <= n <= 26)
+                high_50 = sum(1 for n in nums if 50 <= n <= 99)
+                # Nomenclator: bimodal — majority are letter codes (01-26) mixed
+                # with a few word codes (50-99).
+                if low_26 / len(nums) >= 0.50 and high_50 >= 1:
+                    return _deterministic("nomenclator", 0.65)
+                # Aeneas Tacticus: all numbers 01–26 (pure alphabet positions)
+                if all(1 <= n <= 26 for n in nums):
+                    return _deterministic("aeneas_tacticus", 0.72)
+                # Wallis cipher: uses 90 and/or 91 as explicit group markers
+                # (they appear multiple times as structural delimiters)
+                if nums.count(90) >= 2 or nums.count(91) >= 2:
+                    return _deterministic("wallis_cipher", 0.70)
+                # Nihilist: Polybius row+col sums → minimum possible value is 22
+                # (smallest polybius cell 11 + smallest key cell 11). So a nihilist
+                # ciphertext has NO values below 22.
+                below_22 = sum(1 for n in nums if n < 22)
+                in_nihilist_range = sum(1 for n in nums if 22 <= n <= 99)
+                if below_22 == 0 and in_nihilist_range / len(nums) >= 0.80:
+                    return _deterministic("nihilist", 0.65)
+                # Homophonic: broad 00-99 distribution often includes values < 22
+                if below_22 / len(nums) >= 0.15:
+                    return _deterministic("homophonic", 0.50)
+                return _deterministic("homophonic", 0.45)
+
+            # Mixed / non-uniform token-length block
+            # (reached when not all tokens are the same 2-digit length)
+            if avg_len < 3.0 and len(tokens) >= 5:
+                max_num = max(nums) if nums else 0
+                # Wallis cipher markers still detectable in mixed-length text
+                if nums.count(90) >= 2 or nums.count(91) >= 2:
+                    return _deterministic("wallis_cipher", 0.62)
+                if max_num <= 26:
+                    return _deterministic("aeneas_tacticus", 0.55)
+                # Nihilist overflow: sums can reach 110 (55+55); values are ≥ 22
+                if max_num <= 110:
+                    below_22 = sum(1 for n in nums if n < 22)
+                    if below_22 == 0:
+                        return _deterministic("nihilist", 0.55)
+                # Broad 2-digit range without structure → homophonic
+                if max_num <= 99:
+                    return _deterministic("homophonic", 0.50)
+                return _deterministic("homophonic", 0.45)
 
             if avg_len < 3.5:
-                # 2–3 digit tokens: culper_ring, great_cipher, argenti, wallis
-                if avg_len < 3.0:
-                    return _deterministic("culper_ring", 0.50)
+                # 2–3 digit tokens: great_cipher, argenti
                 return _deterministic("great_cipher", 0.50)
 
             # Default numeric fallback
