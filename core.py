@@ -712,15 +712,25 @@ def heuristic_classify(text: str) -> ModelPrediction:  # noqa: C901 – intentio
             if all(len(t) == 4 and t.isdigit() for t in tokens) and len(tokens) >= 3:
                 return _deterministic("chinese_telegraph", 0.89)
 
-            # JN-25 / naval code: all tokens 5 digits, many start with 0
+            # JN-25 / naval code: all tokens 5 digits, values typically < 50 000
+            # (codebook covers 00000-49999).  Zimmermann uses high 9XXXX groups.
             if all(len(t) == 5 and t.isdigit() for t in tokens):
-                leading0 = sum(1 for t in tokens if t.startswith("0"))
-                if leading0 / len(tokens) >= 0.4:
+                vals = [int(t) for t in tokens]
+                above_50k = sum(1 for v in vals if v >= 50000)
+                below_50k = sum(1 for v in vals if v < 50000)
+                above_90k = sum(1 for v in vals if v >= 90000)
+                # Zimmermann: heavy concentration of 9XXXX groups (90 000+)
+                if above_90k / len(vals) >= 0.60:
+                    return _deterministic("zimmermann", 0.85)
+                # JN-25: all (or nearly all) values fall in the 0-49 999 range
+                if below_50k / len(vals) >= 0.80 and above_50k == 0:
                     return _deterministic("jn25", 0.83)
-                # Zimmermann: 5-digit groups with many 9s or 0s
-                heavy = sum(1 for t in tokens if t[0] in "90")
-                if heavy / len(tokens) >= 0.5:
-                    return _deterministic("zimmermann", 0.80)
+
+            # Zimmermann also occurs with mixed 4–5-digit groups where many values ≥ 90 000
+            if nums and all(len(t) in (4, 5) and t.isdigit() for t in tokens):
+                above_90k_any = sum(1 for n in nums if n >= 90000)
+                if above_90k_any / len(nums) >= 0.50:
+                    return _deterministic("zimmermann", 0.78)
 
             # Culper Ring: 3-digit tokens overwhelmingly in the 800–999 range
             # (999 used as word separator, other tokens are letter codes 800–998)
