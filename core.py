@@ -873,8 +873,15 @@ def heuristic_classify(text: str) -> ModelPrediction:  # noqa: C901 – intentio
         return _deterministic("caesar", conf)
 
     # Affine (even if Caesar has 0-1 words)
+    affine_chi = ev.affine_candidates[0][2] if ev.affine_candidates else 999
+    best_a = ev.affine_candidates[0][0] if ev.affine_candidates else 1
     if affine_words >= 3:
         return _deterministic("affine", min(0.75, 0.18 + 0.07 * affine_words))
+    # Chi-based affine: best non-Caesar affine key decodes to natural language.
+    # At threshold 50: affine TP=92%, monoalphabetic FP=1.7%, playfair FP=0%.
+    # Exclude a=1 (caesar/rot13 already handled above).
+    if n_letters >= 25 and affine_chi < 50 and best_a != 1:
+        return _deterministic("affine", 0.65)
 
     # Now gate on length: IoC-based routing needs sufficient text
     if n_letters < 20:
