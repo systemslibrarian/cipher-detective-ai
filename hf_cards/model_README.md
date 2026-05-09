@@ -55,28 +55,32 @@ This model supports the **Cipher Detective AI** Hugging Face Space. It is intend
 ## Training
 
 ```bash
-python scripts/generate_dataset.py --out data/cipher_examples.jsonl --n 50000 --seed 42
+python scripts/convert_museum_corpus.py \
+  --museum /path/to/cipher-museum/public/corpus/all.jsonl \
+  --out data/cipher_examples.jsonl --split all
 python scripts/train_transformer.py \
   --data data/cipher_examples.jsonl \
   --model distilbert-base-uncased \
   --out cipher_model \
-  --epochs 3
+  --epochs 3 --batch-size 64
 ```
 
-## Evaluation
+Training data: **100,026 examples** from [systemslibrarian/classical-cipher-corpus](https://huggingface.co/datasets/systemslibrarian/classical-cipher-corpus) — sourced from the [Cipher Museum](https://ciphermuseum.com) public corpus (CC0).
 
-After training, include:
+## Evaluation (3 epochs, 20% held-out test set)
 
-- accuracy
-- macro F1
-- per-label precision/recall/F1
-- confusion matrix
-- examples of false positives
-- examples of false negatives
+| Metric | Value |
+|---|---|
+| Accuracy | **48.3%** |
+| Macro Precision | **56.9%** |
+| Macro Recall | **52.0%** |
+| Macro F1 | **51.8%** |
+
+81-class classification (random baseline ≈ 1.2%). Performance varies significantly by cipher family — substitution families with distinctive patterns (Caesar, Atbash, Morse) score highest; machine ciphers with similar statistical profiles (Enigma, Lorenz, SIGABA) are harder to distinguish from surface text alone.
 
 ## Limitations
 
-The model learns patterns from synthetic educational examples. It can confuse cipher families with similar surface statistics, especially transposition, substitution, and short Vigenère samples. It should be presented as a teaching classifier, not as a cryptanalytic authority.
+The model learns surface statistical patterns from the ciphertext text field. It can confuse cipher families with similar statistics, especially machine ciphers, polyalphabetic variants, and short samples. It should be presented as a teaching classifier, not as a cryptanalytic authority.
 
 ## Responsible-use statement
 
