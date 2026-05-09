@@ -266,9 +266,13 @@ def detective_mode(ciphertext: str) -> Tuple[str, str]:
         return "Paste a classical ciphertext sample to begin.", ""
     pred = combined_prediction(ciphertext)
     explanation = build_explanation(ciphertext, pred)
+    all_scores = sorted(pred.scores.items(), key=lambda kv: kv[1], reverse=True)
+    top_scores = all_scores[:10]
     score_lines = ["| Label | Score |", "|---|---:|"]
-    for label, score in sorted(pred.scores.items(), key=lambda kv: kv[1], reverse=True):
+    for label, score in top_scores:
         score_lines.append(f"| `{label}` | {score:.1%} |")
+    if len(all_scores) > 10:
+        score_lines.append(f"| _(+{len(all_scores) - 10} more)_ | … |")
     return explanation, "\n".join(score_lines)
 
 
@@ -413,9 +417,12 @@ def compare_modes(ciphertext: str) -> Tuple[str, str, str]:
     ml = transformer_predict(ciphertext)
 
     def _table(p: ModelPrediction) -> str:
+        all_s = sorted(p.scores.items(), key=lambda kv: kv[1], reverse=True)
         rows = ["| Label | Score |", "|---|---:|"]
-        for label, score in sorted(p.scores.items(), key=lambda kv: kv[1], reverse=True):
+        for label, score in all_s[:10]:
             rows.append(f"| `{label}` | {score:.1%} |")
+        if len(all_s) > 10:
+            rows.append(f"| _(+{len(all_s) - 10} more)_ | … |")
         return f"**Top: `{p.label}`** ({p.confidence:.1%})\n\n" + "\n".join(rows)
 
     heur_md = _table(heur)
