@@ -127,7 +127,7 @@ def train() -> None:
         _log("Tokenisation complete.")
 
         from collections import Counter
-        counts = Counter(ds["train"]["labels"].tolist())
+        counts = Counter(list(ds["train"]["labels"]))
         total  = sum(counts.values())
         weights = np.array(
             [total / (num_labels * counts.get(i, 1)) for i in range(num_labels)],
