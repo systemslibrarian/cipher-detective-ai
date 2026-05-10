@@ -23,6 +23,7 @@ import torch
 from datasets import load_dataset
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 from transformers import (
+    AutoConfig,
     AutoModelForSequenceClassification,
     AutoTokenizer,
     DataCollatorWithPadding,
@@ -163,8 +164,29 @@ def train() -> None:
                     key=lambda p: int(p.name.split("-")[1]),
                 )
                 if ckpts:
-                    weights_source = str(ckpts[-1])
-                    _log(f"Loading weights from: {ckpts[-1].name} (fresh optimizer)")
+                    candidate = ckpts[-1]
+                    # Verify the checkpoint architecture matches MODEL_BASE.
+                    # The Hub repo may contain a checkpoint from a *different*
+                    # base (e.g. distilbert), in which case loading it with our
+                    # roberta tokenizer would produce out-of-range token IDs
+                    # and a CUDA device-side assert in the embedding lookup.
+                    base_cfg = AutoConfig.from_pretrained(MODEL_BASE)
+                    ckpt_cfg = AutoConfig.from_pretrained(str(candidate))
+                    if (
+                        ckpt_cfg.model_type == base_cfg.model_type
+                        and getattr(ckpt_cfg, "vocab_size", None)
+                            == getattr(base_cfg, "vocab_size", None)
+                    ):
+                        weights_source = str(candidate)
+                        _log(f"Loading weights from: {candidate.name} (fresh optimizer)")
+                    else:
+                        _log(
+                            f"Checkpoint {candidate.name} is "
+                            f"{ckpt_cfg.model_type}/vocab={ckpt_cfg.vocab_size}, "
+                            f"but MODEL_BASE is "
+                            f"{base_cfg.model_type}/vocab={base_cfg.vocab_size}. "
+                            "Ignoring checkpoint and starting from base model."
+                        )
                 else:
                     _log("No checkpoints found — starting from base model.")
             except Exception as exc:
