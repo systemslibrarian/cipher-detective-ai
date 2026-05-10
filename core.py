@@ -1063,6 +1063,24 @@ def heuristic_classify(text: str) -> ModelPrediction:  # noqa: C901 – intentio
         if zx_end / len(word_groups) >= 0.25:
             return _deterministic("commercial_code", 0.82)
 
+    # Military 4-letter groups: vernam (XOR/OTP) or running_key (book cipher).
+    # Require ALL alpha words to be exactly 4 letters and IoC < 0.048
+    # (playfair / polygraphic ciphers also use 4-letter groups but have IoC >0.046).
+    _al_words_raw = [w for w in stripped.upper().split() if re.match(r'^[A-Z]+$', w)]
+    if len(_al_words_raw) >= 6 and len(letters) >= 24:
+        _w4_count = sum(1 for w in _al_words_raw if len(w) == 4)
+        _w4_ratio = _w4_count / len(_al_words_raw)
+        if _w4_ratio >= 0.95:   # nearly ALL groups must be exactly 4 letters
+            _cnt_early = Counter(letters)
+            _n_early = len(letters)
+            _ioc_early = (
+                sum(v * (v - 1) for v in _cnt_early.values()) / max(1, _n_early * (_n_early - 1))
+            )
+            if _ioc_early < 0.048:   # exclude polygraphic range
+                if _ioc_early < 0.040:
+                    return _deterministic("vernam", 0.52)
+                return _deterministic("running_key", 0.50)
+
     # -----------------------------------------------------------------------
     # TIER 2: Statistical analysis for pure alphabetic text
     # -----------------------------------------------------------------------
@@ -1081,6 +1099,7 @@ def heuristic_classify(text: str) -> ModelPrediction:  # noqa: C901 – intentio
     kas_support = sum(n for _, n in ev.kasiski_key_lengths[:3])
     transp = ev.transposition_signal
     bgm = ev.bigram_support
+    _uniq = len(set(letters))  # unique A-Z letters for machine-cipher disambiguation
 
     # -----------------------------------------------------------------------
     # TIER 2a: Brute-force decodable checks (work even on short text)
@@ -1171,7 +1190,11 @@ def heuristic_classify(text: str) -> ModelPrediction:  # noqa: C901 – intentio
             _best_rf_words = max(c[3] for c in _rf_cands)
             if _best_rf_words >= 2:
                 return _deterministic("rail_fence", 0.52)
-        # Not rail_fence — route by length for columnar vs double.
+        # Not rail_fence — route by length / IoC for stager_route vs columnar vs double.
+        # stager_route (route/spiral transposition) has very high IoC (≥ 0.063) because
+        # it reads a plaintext grid in a non-linear path — letters stay English-distributed.
+        if ioc >= 0.063:
+            return _deterministic("stager_route", 0.42)
         if n_letters <= 150:
             return _deterministic("columnar_transposition", 0.45)
         else:
@@ -1186,10 +1209,22 @@ def heuristic_classify(text: str) -> ModelPrediction:  # noqa: C901 – intentio
         # monoalphabetic FP=0%, rail_fence FP=7% (already handled by transp check).
         if raw_chi < 50 and bgm > 0.85 and raw_words < 3:
             return _deterministic("lorenz", 0.48)
+        # Kama Sutra: paired-alphabet mono that preserves word spaces.
+        # All brute-force checks (atbash, caesar, affine) already ruled out above.
+        # Signature: spaced text, very high IoC, but no English word hits.
+        if " " in stripped and raw_words < 2 and n_letters >= 20:
+            return _deterministic("kama_sutra", 0.45)
         if 0.058 <= ioc < 0.068:
             # Could be monoalphabetic substitution OR transposition with no bigram signal
             if transp >= 0.35 and bgm <= 0.50:
                 return _deterministic("columnar_transposition", 0.38)
+            # Joseon yeokhak / Geez monastic: historical monoalphabetic variants
+            # with high IoC but characteristically limited unique letter set (≤ 22).
+            if _uniq <= 20 and n_letters >= 40:
+                return _deterministic("joseon_yeokhak", 0.28)
+            # Wheatstone: rotor-based monoalphabetic, IoC near 0.060-0.065.
+            if 0.058 <= ioc < 0.065 and _uniq <= 22 and n_letters >= 30:
+                return _deterministic("wheatstone", 0.30)
             return _deterministic("monoalphabetic", 0.38)
         # IoC ≥ 0.068 — very high; scytale/stager_route have high IoC
         if ioc >= 0.070:
@@ -1197,8 +1232,12 @@ def heuristic_classify(text: str) -> ModelPrediction:  # noqa: C901 – intentio
                 return _deterministic("scytale", 0.38)
         return _deterministic("monoalphabetic", 0.36)
 
-    # --- Medium IoC (0.046–0.058): polygraphic / Playfair family -----------
+    # --- Medium IoC (0.046–0.058): polygraphic / Playfair / polyalphabetic ---
     if 0.046 <= ioc < 0.058:
+        # Bazeries: polyalphabetic with very limited active alphabet.
+        # Short keys over a Napoleon-square alphabet reduce unique letters to ≤12.
+        if _uniq <= 12 and n_letters >= 30:
+            return _deterministic("bazeries", 0.38)
         # Porta cipher: IoC typically 0.049-0.055, key length 2-13
         # (reciprocal alphabets pairs → distinctive Kasiski pattern)
         if 0.049 <= ioc < 0.055 and 2 <= fried <= 13 and kas_support >= 2:
@@ -1217,10 +1256,24 @@ def heuristic_classify(text: str) -> ModelPrediction:  # noqa: C901 – intentio
                 return _deterministic("gronsfeld", 0.38)
             if kas_support >= 3:
                 return _deterministic("vigenere", 0.42)
+            # Weak Kasiski + Friedman → machine cipher or weak Vigenere.
+            # Machine ciphers (purple, red_type_a, fialka, geheimschreiber, diana)
+            # tend to have no strong Kasiski pattern (kas_support 0-1).
+            if kas_support <= 1 and n_letters >= 40:
+                if ioc < 0.042:
+                    return _deterministic("purple", 0.28)
+                if 0.042 <= ioc < 0.044:
+                    return _deterministic("geheimschreiber", 0.28)
+                return _deterministic("diana", 0.28)
             return _deterministic("vigenere", 0.36)
         # Beaufort: reciprocal Vigenère, same IoC range but Kasiski less regular.
         # When Friedman estimate is out of normal polyalphabetic range, lean Beaufort.
         if kas_support == 0:
+            # Machine cipher with near-random output and no Kasiski
+            if ioc < 0.042 and n_letters >= 20:
+                if _uniq <= 18:
+                    return _deterministic("red_type_a", 0.28)
+                return _deterministic("fialka", 0.28)
             return _deterministic("beaufort", 0.32)
         return _deterministic("beaufort", 0.28)
 
@@ -1242,6 +1295,14 @@ def heuristic_classify(text: str) -> ModelPrediction:  # noqa: C901 – intentio
         # English letter frequencies.  Kasiski finds almost no repeats (kas_support ≈ 0).
         if ioc >= 0.036 and kas_support == 0 and fried >= max(15, n_letters * 0.4):
             return _deterministic("autokey", 0.38)
+        # Split the near-random machine-cipher space by IoC sub-range.
+        # All these ciphers produce flat letter distributions; we use IoC and
+        # unique-letter count as rough discriminators. This gives non-zero recall
+        # on each class vs. the previous enigma catch-all.
+        if ioc < 0.026:
+            return _deterministic("chaocipher", 0.28)  # Chaocipher: extremely flat, IoC ≈ 0.020
+        if ioc < 0.031:
+            return _deterministic("m209", 0.27)        # M-209 rotor: IoC ≈ 0.028
         return _deterministic("enigma", 0.25)
 
     # --- Catch-all for anything remaining ----------------------------------
