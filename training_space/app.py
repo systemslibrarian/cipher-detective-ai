@@ -1,11 +1,13 @@
 """
 Cipher Detective Training Space
 --------------------------------
-Trains roberta-base on the classical-cipher-corpus (81 classes, ~58k examples).
-Pushes the trained model to systemslibrarian/cipher-detective-classifier.
+Trains roberta-base on the classical-cipher-corpus (81 classes, ~58k balanced
+examples). Pushes the trained model to
+systemslibrarian/cipher-detective-classifier when done.
 
-Training starts automatically on Space startup. The Gradio UI shows
-live progress and final metrics.
+NO gradio import — uses a bare HTTP server so HF's health check passes
+regardless of the audioop/Python-3.13 issue.  Training runs in a background
+thread as soon as the process starts.
 """
 from __future__ import annotations
 
@@ -13,9 +15,9 @@ import json
 import os
 import threading
 import time
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
-import gradio as gr
 import numpy as np
 import torch
 from datasets import load_dataset
@@ -38,18 +40,18 @@ HF_TOKEN     = os.environ.get("HF_TOKEN", "")
 
 EPOCHS       = 10
 BATCH_SIZE   = 32
-GRAD_ACCUM   = 2          # effective batch = 64
+GRAD_ACCUM   = 2
 MAX_LEN      = 256
 LR           = 2e-5
 WARMUP_RATIO = 0.06
 LABEL_SMOOTH = 0.05
-GAMMA        = 2.0        # focal loss gamma
-RESUME_FROM_HUB = True   # resume from latest checkpoint in HUB_MODEL_ID if present
+GAMMA        = 2.0
+RESUME_FROM_HUB = True
 
 # ── Shared state ──────────────────────────────────────────────────────────────
 _log_lines: list[str] = []
 _metrics_history: list[dict] = []
-_status = "⏳ Initialising…"
+_status = "Initialising…"
 _done   = False
 _final_metrics: dict = {}
 
@@ -92,8 +94,12 @@ def train() -> None:
     global _status, _done, _final_metrics
     try:
         _log("Loading dataset from HF Hub…")
-        _status = "📦 Loading dataset…"
-        ds = load_dataset(DATASET_ID, data_files={"train": "data/train.jsonl", "validation": "data/val.jsonl"})
+        _status = "Loading dataset…"
+        ds = load_dataset(
+            DATASET_ID,
+            data_files={"train": "data/train.jsonl", "validation": "data/val.jsonl"},
+            token=HF_TOKEN or None,
+        )
         _log(f"  train={len(ds['train']):,}  val={len(ds['validation']):,}")
 
         labels_sorted = sorted(set(ds["train"]["label"]))
@@ -103,7 +109,7 @@ def train() -> None:
         _log(f"  {num_labels} labels")
 
         _log(f"Loading tokenizer: {MODEL_BASE}")
-        _status = "🔤 Tokenising…"
+        _status = "Tokenising…"
         tokenizer = AutoTokenizer.from_pretrained(MODEL_BASE)
 
         def tokenize(batch):
@@ -113,22 +119,25 @@ def train() -> None:
             batch["labels"] = [label2id[l] for l in batch["label"]]
             return batch
 
-        ds = ds.map(tokenize,      batched=True, batch_size=512, remove_columns=["ciphertext"])
-        ds = ds.map(encode_label,  batched=True, batch_size=512)
-        ds = ds.remove_columns([c for c in ds["train"].column_names if c not in ("input_ids", "attention_mask", "labels")])
+        ds = ds.map(tokenize,     batched=True, batch_size=512, remove_columns=["ciphertext"])
+        ds = ds.map(encode_label, batched=True, batch_size=512)
+        keep = {"input_ids", "attention_mask", "labels"}
+        ds = ds.remove_columns([c for c in ds["train"].column_names if c not in keep])
         ds.set_format("torch")
         _log("Tokenisation complete.")
 
-        # Class weights for imbalanced minority classes
         from collections import Counter
         counts = Counter(ds["train"]["labels"].tolist())
         total  = sum(counts.values())
-        weights = np.array([total / (num_labels * counts.get(i, 1)) for i in range(num_labels)], dtype=np.float32)
+        weights = np.array(
+            [total / (num_labels * counts.get(i, 1)) for i in range(num_labels)],
+            dtype=np.float32,
+        )
         cw = torch.tensor(weights)
         _log(f"Class weights: min={cw.min():.2f}  max={cw.max():.2f}")
 
-        _log(f"Loading model: {MODEL_BASE} ({num_labels} output labels)")
-        _status = "🏗️ Building model…"
+        _log(f"Loading base model: {MODEL_BASE}")
+        _status = "Building model…"
         model = AutoModelForSequenceClassification.from_pretrained(
             MODEL_BASE,
             num_labels=num_labels,
@@ -137,27 +146,34 @@ def train() -> None:
         )
 
         steps_per_epoch = len(ds["train"]) // (BATCH_SIZE * GRAD_ACCUM)
-        total_steps     = steps_per_epoch * EPOCHS
         eval_steps      = max(50, steps_per_epoch // 2)
-
-        output_dir = Path("./cipher_model_output")
+        output_dir      = Path("./cipher_model_output")
 
         # Resume from latest Hub checkpoint if available
         resume_checkpoint = None
         if RESUME_FROM_HUB and HF_TOKEN:
             try:
                 from huggingface_hub import snapshot_download
-                _log(f"Checking for existing checkpoint in {HUB_MODEL_ID}…")
-                ckpt_dir = Path(snapshot_download(HUB_MODEL_ID, token=HF_TOKEN, ignore_patterns=["*.msgpack", "flax_model*"]))
-                # Find highest numbered checkpoint
-                ckpts = sorted(ckpt_dir.glob("checkpoint-*"), key=lambda p: int(p.name.split("-")[1]))
+                _log(f"Checking for checkpoint in {HUB_MODEL_ID}…")
+                ckpt_dir = Path(
+                    snapshot_download(
+                        HUB_MODEL_ID,
+                        token=HF_TOKEN,
+                        ignore_patterns=["*.msgpack", "flax_model*"],
+                    )
+                )
+                ckpts = sorted(
+                    ckpt_dir.glob("checkpoint-*"),
+                    key=lambda p: int(p.name.split("-")[1]),
+                )
                 if ckpts:
                     resume_checkpoint = str(ckpts[-1])
                     _log(f"Resuming from: {ckpts[-1].name}")
                 else:
-                    _log("No checkpoints found — starting fresh.")
-            except Exception as e:
-                _log(f"Could not load checkpoint ({e}) — starting fresh.")
+                    _log("No checkpoints found — starting from epoch 1.")
+            except Exception as exc:
+                _log(f"Could not load checkpoint ({exc}) — starting fresh.")
+
         args = TrainingArguments(
             output_dir=str(output_dir),
             num_train_epochs=EPOCHS,
@@ -178,8 +194,6 @@ def train() -> None:
             dataloader_num_workers=2,
             report_to="none",
             logging_steps=50,
-            logging_dir=str(output_dir / "logs"),
-            push_to_hub=False,   # we push manually below
         )
 
         FocalTrainer = make_focal_trainer(cw, gamma=GAMMA)
@@ -191,36 +205,32 @@ def train() -> None:
             tokenizer=tokenizer,
             data_collator=DataCollatorWithPadding(tokenizer),
             compute_metrics=compute_metrics,
-            callbacks=[EarlyStoppingCallback(early_stopping_patience=3)],
+            callbacks=[EarlyStoppingCallback(early_stopping_patience=4)],
         )
 
-        _status = f"🏋️ Training ({EPOCHS} epochs, focal loss, A10G)…"
+        _status = f"Training ({EPOCHS} epochs, focal loss, A10G)…"
         _log("Starting training…")
         trainer.train(resume_from_checkpoint=resume_checkpoint)
         _log("Training complete.")
 
-        # Final eval
-        _status = "📊 Evaluating…"
+        _status = "Evaluating…"
         result = trainer.evaluate()
         _final_metrics = {k: round(v, 4) for k, v in result.items()}
         _log(f"Final metrics: {_final_metrics}")
 
-        # Save label mapping alongside model
         output_dir.mkdir(exist_ok=True)
         (output_dir / "label_mapping.json").write_text(
             json.dumps({"label2id": label2id, "id2label": id2label}, indent=2)
         )
 
-        # Push to Hub
-        _status = "🚀 Pushing model to Hub…"
+        _status = "Pushing model to Hub…"
         _log(f"Pushing to {HUB_MODEL_ID}…")
         trainer.push_to_hub(
             repo_id=HUB_MODEL_ID,
-            commit_message=f"trained roberta-base: macro_f1={_final_metrics.get('eval_macro_f1', '?')}",
+            commit_message=f"trained: macro_f1={_final_metrics.get('eval_macro_f1', '?')}",
             token=HF_TOKEN,
             blocking=True,
         )
-        # Also upload label mapping
         from huggingface_hub import HfApi
         HfApi(token=HF_TOKEN).upload_file(
             path_or_fileobj=str(output_dir / "label_mapping.json"),
@@ -228,56 +238,73 @@ def train() -> None:
             repo_id=HUB_MODEL_ID,
             commit_message="add label_mapping.json",
         )
-        _log(f"✅ Model pushed to https://huggingface.co/{HUB_MODEL_ID}")
-        _status = f"✅ Done! macro_f1={_final_metrics.get('eval_macro_f1', '?')}"
+        _log(f"Done! https://huggingface.co/{HUB_MODEL_ID}")
+        _status = f"Done! macro_f1={_final_metrics.get('eval_macro_f1', '?')}"
         _done = True
 
     except Exception as exc:
         import traceback
-        msg = traceback.format_exc()
-        _log(f"ERROR: {exc}\n{msg}")
-        _status = f"❌ Error: {exc}"
+        _log(f"ERROR: {exc}\n{traceback.format_exc()}")
+        _status = f"Error: {exc}"
         _done = True
 
 
-# Start training in background thread immediately on Space startup
-_thread = threading.Thread(target=train, daemon=True)
-_thread.start()
+# ── Minimal HTTP server (HF health-check + status page) ──────────────────────
+class StatusHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = self._build_page().encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args):
+        pass  # silence access log
+
+    def _build_page(self):
+        log_html = "\n".join(_log_lines[-60:]).replace("<", "&lt;").replace(">", "&gt;")
+        metrics_html = ""
+        if _metrics_history:
+            rows = "".join(
+                f"<tr><td>{i+1}</td><td>{m['accuracy']:.4f}</td><td>{m['macro_f1']:.4f}</td></tr>"
+                for i, m in enumerate(_metrics_history)
+            )
+            metrics_html = f"<h2>Eval history</h2><table border=1><tr><th>Step</th><th>Acc</th><th>macro_F1</th></tr>{rows}</table>"
+        final_html = ""
+        if _final_metrics:
+            items = "".join(f"<li><b>{k}</b>: {v}</li>" for k, v in _final_metrics.items())
+            final_html = f"<h2>Final metrics</h2><ul>{items}</ul>"
+        return f"""<!DOCTYPE html>
+<html><head><meta charset=utf-8><meta http-equiv="refresh" content="30">
+<title>Cipher Detective Trainer</title>
+<style>
+body{{font-family:monospace;padding:20px;max-width:960px;background:#0d1117;color:#e6edf3}}
+pre{{background:#161b22;color:#3fb950;padding:12px;overflow-x:auto;white-space:pre-wrap;border-radius:6px}}
+h1,h2{{color:#58a6ff}}a{{color:#79c0ff}}
+table{{border-collapse:collapse;margin:8px 0}}
+td,th{{padding:4px 12px;border:1px solid #30363d}}
+ul{{line-height:1.8}}
+</style>
+</head><body>
+<h1>&#x1F9E0; Cipher Detective — Training Job</h1>
+<p><b>Status:</b> {_status}</p>
+<p><b>Model target:</b> <a href="https://huggingface.co/{HUB_MODEL_ID}">{HUB_MODEL_ID}</a></p>
+<p><em>Page auto-refreshes every 30 s</em></p>
+{metrics_html}
+{final_html}
+<h2>Training log (last 60 lines)</h2>
+<pre>{log_html if log_html else "(starting…)"}</pre>
+</body></html>"""
 
 
-# ── Gradio UI ────────────────────────────────────────────────────────────────
-def get_status():
-    log_text = "\n".join(_log_lines[-60:])        # last 60 lines
-    chart = ""
-    if _metrics_history:
-        rows = ["| Step | Accuracy | Macro F1 |", "|---:|---:|---:|"]
-        for i, m in enumerate(_metrics_history):
-            rows.append(f"| {i+1} | {m['accuracy']:.4f} | {m['macro_f1']:.4f} |")
-        chart = "\n".join(rows)
-    final = ""
-    if _final_metrics:
-        final = "### Final metrics\n" + "\n".join(f"- **{k}**: {v}" for k, v in _final_metrics.items())
-    return _status, log_text, chart, final
+# ── Entry point ───────────────────────────────────────────────────────────────
+if __name__ == "__main__":
+    # Training thread starts immediately — no gradio dependency at all
+    thread = threading.Thread(target=train, daemon=True)
+    thread.start()
 
-
-with gr.Blocks(title="Cipher Detective Trainer") as demo:
-    gr.Markdown(
-        "# 🧠 Cipher Detective — Training Job\n"
-        "Training `roberta-base` on 81 cipher classes. "
-        f"Target: [{HUB_MODEL_ID}](https://huggingface.co/{HUB_MODEL_ID})\n\n"
-        "_Refresh the page or click **Refresh** to see latest progress._"
-    )
-    status_box = gr.Textbox(label="Status", value=_status, interactive=False)
-    refresh_btn = gr.Button("🔄 Refresh")
-    log_box     = gr.Textbox(label="Training log (last 60 lines)", lines=25, interactive=False)
-    metrics_md  = gr.Markdown(label="Eval history")
-    final_md    = gr.Markdown(label="Final metrics")
-
-    def refresh():
-        s, l, c, f = get_status()
-        return s, l, c, f
-
-    refresh_btn.click(refresh, outputs=[status_box, log_box, metrics_md, final_md])
-    demo.load(refresh, outputs=[status_box, log_box, metrics_md, final_md], every=30)
-
-demo.launch(server_name="0.0.0.0", server_port=7860)
+    # Serve status page on port 7860 (HF Spaces default)
+    server = HTTPServer(("0.0.0.0", 7860), StatusHandler)
+    _log("Status server running on http://0.0.0.0:7860")
+    server.serve_forever()
