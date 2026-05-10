@@ -169,6 +169,14 @@ def train() -> None:
                 if ckpts:
                     resume_checkpoint = str(ckpts[-1])
                     _log(f"Resuming from: {ckpts[-1].name}")
+                    # Remove the optimizer state file so Trainer doesn't try to load
+                    # it — the checkpoint was saved with a different parameter-group
+                    # layout and loading it raises ValueError.  Model weights are kept.
+                    for _opt_file in ("optimizer.pt", "optimizer.bin"):
+                        _opt_path = ckpts[-1] / _opt_file
+                        if _opt_path.exists():
+                            _opt_path.unlink()
+                            _log(f"Removed incompatible optimizer state: {_opt_file}")
                 else:
                     _log("No checkpoints found — starting from epoch 1.")
             except Exception as exc:
