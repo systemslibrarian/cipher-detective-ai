@@ -169,14 +169,22 @@ def train() -> None:
                 if ckpts:
                     resume_checkpoint = str(ckpts[-1])
                     _log(f"Resuming from: {ckpts[-1].name}")
-                    # Remove the optimizer state file so Trainer doesn't try to load
-                    # it — the checkpoint was saved with a different parameter-group
-                    # layout and loading it raises ValueError.  Model weights are kept.
-                    for _opt_file in ("optimizer.pt", "optimizer.bin"):
-                        _opt_path = ckpts[-1] / _opt_file
-                        if _opt_path.exists():
-                            _opt_path.unlink()
-                            _log(f"Removed incompatible optimizer state: {_opt_file}")
+                    # Remove optimizer/scheduler/trainer-state files.
+                    # These were saved by an older Transformers version that lacks
+                    # 'stateful_callbacks' in trainer_state.json, which causes a
+                    # KeyError in newer Transformers _save_checkpoint.
+                    # Model weights (model.safetensors) are NOT touched.
+                    for _stale in (
+                        "optimizer.pt", "optimizer.bin",
+                        "scheduler.pt",
+                        "trainer_state.json",
+                        "training_args.bin",
+                        "scaler.pt",
+                    ):
+                        _stale_path = ckpts[-1] / _stale
+                        if _stale_path.exists():
+                            _stale_path.unlink()
+                            _log(f"Removed stale checkpoint file: {_stale}")
                 else:
                     _log("No checkpoints found — starting from epoch 1.")
             except Exception as exc:
