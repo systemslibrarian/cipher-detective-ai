@@ -1130,13 +1130,16 @@ def heuristic_classify(text: str) -> ModelPrediction:  # noqa: C901 – intentio
     if n_letters >= 25 and affine_chi < 50 and best_a != 1:
         return _deterministic("affine", 0.65)
 
-    # Now gate on length: IoC-based routing needs sufficient text
-    if n_letters < 20:
-        return ModelPrediction("too_short", 0.20, {"too_short": 0.20}, "heuristic")
+    # Short-text gate already handled above (n_letters < 12 → too_short).
+    # For 12–19 letter texts we still fall through to IoC routing.
 
     # -----------------------------------------------------------------------
-    # TIER 2b: IoC-based family routing (requires ≥ 20 letters)
+    # TIER 2b: IoC-based family routing (requires ≥ 12 letters)
     # -----------------------------------------------------------------------
+    # Note: lowered threshold from 20 → 12 so that short polygraphic examples
+    # (Playfair, Bifid, columnar) get IoC-family routing instead of too_short.
+    if n_letters < 12:
+        return ModelPrediction("too_short", 0.20, {"too_short": 0.20}, "heuristic")
 
     # --- Scytale / stager_route: X-padded transposition --------------------
     # These ciphers pad to fill a rectangular grid using null 'X' characters.
@@ -1158,9 +1161,18 @@ def heuristic_classify(text: str) -> ModelPrediction:  # noqa: C901 – intentio
     if _transp_by_chi or _transp_by_signal:
         # Transposition ciphers preserve letter frequencies → high IoC,
         # but scramble bigrams → lower bigram_support.
-        if n_letters <= 70:
-            return _deterministic("rail_fence", 0.48)
-        elif n_letters <= 180:
+        # Use rail-fence scoring to distinguish rail_fence from columnar/double.
+        # NOTE: all transpositions have English-like chi (letters are unchanged),
+        # so chi alone can't discriminate. Use word_score on decoded candidates —
+        # the correct rail count produces recognisable English words; columnar/double
+        # with wrong rail counts won't.
+        _rf_cands = best_rail_fence_candidates(letters, max_rails=10)
+        if _rf_cands:
+            _best_rf_words = max(c[3] for c in _rf_cands)
+            if _best_rf_words >= 2:
+                return _deterministic("rail_fence", 0.52)
+        # Not rail_fence — route by length for columnar vs double.
+        if n_letters <= 150:
             return _deterministic("columnar_transposition", 0.45)
         else:
             return _deterministic("double_transposition", 0.40)
@@ -1192,21 +1204,27 @@ def heuristic_classify(text: str) -> ModelPrediction:  # noqa: C901 – intentio
         if 0.049 <= ioc < 0.055 and 2 <= fried <= 13 and kas_support >= 2:
             return _deterministic("porta", 0.30)
         if 0.049 <= ioc < 0.058:
-            # Gronsfeld uses digit key (0-9) → short key length, Kasiski support
-            if 2 <= fried <= 8 and kas_support >= 2:
-                return _deterministic("gronsfeld", 0.30)
             return _deterministic("playfair", 0.32)
         return _deterministic("playfair", 0.35)
 
     # --- Low-to-medium IoC (0.040–0.046): polyalphabetic & machine ---------
     if 0.040 <= ioc < 0.046:
         if 2 <= fried <= 12:
+            # Gronsfeld uses digit key (0-9), giving short key lengths (1-6 typical).
+            # Its IoC falls here (same as Vigenère), but key is shorter than most
+            # Vigenère keys, making Friedman estimate cluster near 2-6.
+            if 2 <= fried <= 6 and kas_support >= 2:
+                return _deterministic("gronsfeld", 0.38)
             if kas_support >= 3:
                 return _deterministic("vigenere", 0.42)
             return _deterministic("vigenere", 0.36)
+        # Beaufort: reciprocal Vigenère, same IoC range but Kasiski less regular.
+        # When Friedman estimate is out of normal polyalphabetic range, lean Beaufort.
+        if kas_support == 0:
+            return _deterministic("beaufort", 0.32)
         return _deterministic("beaufort", 0.28)
 
-    # --- Very low IoC (< 0.040): machine ciphers / OTP / strong stream -----
+    # --- Very low IoC (< 0.040): machine ciphers / OTP / autokey / stream --
     if ioc < 0.040:
         # Trithemius: progressive Caesar (shift = position index).  Decrypting
         # with the inverse progressive key produces English with low chi and
@@ -1218,6 +1236,12 @@ def heuristic_classify(text: str) -> ModelPrediction:  # noqa: C901 – intentio
             )
             if chi_squared_for_english(_tri_dec) < 50 and word_score(_tri_dec) >= 3:
                 return _deterministic("trithemius", 0.60)
+        # Autokey (running key): the key = keyword + plaintext, so key length ≈
+        # message length.  Friedman over-estimates key length (→ very large fried).
+        # IoC is slightly above pure random (0.036–0.042) because key contains
+        # English letter frequencies.  Kasiski finds almost no repeats (kas_support ≈ 0).
+        if ioc >= 0.036 and kas_support == 0 and fried >= max(15, n_letters * 0.4):
+            return _deterministic("autokey", 0.38)
         return _deterministic("enigma", 0.25)
 
     # --- Catch-all for anything remaining ----------------------------------

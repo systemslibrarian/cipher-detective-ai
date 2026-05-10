@@ -262,7 +262,8 @@ def test_hill_climb_substitution_recovers_long_english():
     ct = substitution_encrypt(plain, mapping)
     recovered, key, score = hill_climb_substitution(ct, iterations=4000, restarts=4, seed=1)
     # Score should land in a recognisably-English range.
-    assert score > -4.5
+    # Threshold is -4.7 (blended bigram 0.4 + trigram 0.6 score; old pure-bigram was -4.5).
+    assert score > -4.7
     assert len(key) == 26
     # The hill-climber may not fully converge in a small iteration budget, but
     # the bigram score (-4.5 bound above) already verifies it is doing useful
