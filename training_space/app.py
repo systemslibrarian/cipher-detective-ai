@@ -210,7 +210,25 @@ def train() -> None:
 
         _status = f"Training ({EPOCHS} epochs, focal loss, A10G)…"
         _log("Starting training…")
-        trainer.train(resume_from_checkpoint=resume_checkpoint)
+        try:
+            trainer.train(resume_from_checkpoint=resume_checkpoint)
+        except ValueError as _exc:
+            if "parameter group" in str(_exc) and resume_checkpoint:
+                _log(
+                    f"Optimizer state mismatch ({_exc}). "
+                    "Loading model weights only and restarting training from scratch."
+                )
+                # Reload just the model weights — drops the incompatible optimizer state
+                trainer.model = AutoModelForSequenceClassification.from_pretrained(
+                    resume_checkpoint,
+                    num_labels=num_labels,
+                    id2label=id2label,
+                    label2id=label2id,
+                    ignore_mismatched_sizes=True,
+                )
+                trainer.train()  # fresh optimizer, but weights from checkpoint
+            else:
+                raise
         _log("Training complete.")
 
         _status = "Evaluating…"
