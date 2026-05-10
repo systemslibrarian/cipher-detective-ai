@@ -136,21 +136,17 @@ def train() -> None:
         cw = torch.tensor(weights)
         _log(f"Class weights: min={cw.min():.2f}  max={cw.max():.2f}")
 
-        _log(f"Loading base model: {MODEL_BASE}")
-        _status = "Building model…"
-        model = AutoModelForSequenceClassification.from_pretrained(
-            MODEL_BASE,
-            num_labels=num_labels,
-            id2label=id2label,
-            label2id=label2id,
-        )
-
         steps_per_epoch = len(ds["train"]) // (BATCH_SIZE * GRAD_ACCUM)
         eval_steps      = max(50, steps_per_epoch // 2)
         output_dir      = Path("./cipher_model_output")
 
-        # Resume from latest Hub checkpoint if available
-        resume_checkpoint = None
+        # Try to load weights from the latest Hub checkpoint. We deliberately
+        # do NOT use trainer.resume_from_checkpoint: the optimizer/scheduler/
+        # trainer_state files saved by older Transformers versions are not
+        # forward-compatible (missing stateful_callbacks key, parameter-group
+        # mismatch, etc.). Loading just the model weights and running with a
+        # fresh optimizer is robust across version changes.
+        weights_source = MODEL_BASE
         if RESUME_FROM_HUB and HF_TOKEN:
             try:
                 from huggingface_hub import snapshot_download
@@ -167,28 +163,22 @@ def train() -> None:
                     key=lambda p: int(p.name.split("-")[1]),
                 )
                 if ckpts:
-                    resume_checkpoint = str(ckpts[-1])
-                    _log(f"Resuming from: {ckpts[-1].name}")
-                    # Remove optimizer/scheduler/trainer-state files.
-                    # These were saved by an older Transformers version that lacks
-                    # 'stateful_callbacks' in trainer_state.json, which causes a
-                    # KeyError in newer Transformers _save_checkpoint.
-                    # Model weights (model.safetensors) are NOT touched.
-                    for _stale in (
-                        "optimizer.pt", "optimizer.bin",
-                        "scheduler.pt",
-                        "trainer_state.json",
-                        "training_args.bin",
-                        "scaler.pt",
-                    ):
-                        _stale_path = ckpts[-1] / _stale
-                        if _stale_path.exists():
-                            _stale_path.unlink()
-                            _log(f"Removed stale checkpoint file: {_stale}")
+                    weights_source = str(ckpts[-1])
+                    _log(f"Loading weights from: {ckpts[-1].name} (fresh optimizer)")
                 else:
-                    _log("No checkpoints found — starting from epoch 1.")
+                    _log("No checkpoints found — starting from base model.")
             except Exception as exc:
                 _log(f"Could not load checkpoint ({exc}) — starting fresh.")
+
+        _log(f"Loading model from: {weights_source}")
+        _status = "Building model…"
+        model = AutoModelForSequenceClassification.from_pretrained(
+            weights_source,
+            num_labels=num_labels,
+            id2label=id2label,
+            label2id=label2id,
+            ignore_mismatched_sizes=True,
+        )
 
         args = TrainingArguments(
             output_dir=str(output_dir),
@@ -226,25 +216,7 @@ def train() -> None:
 
         _status = f"Training ({EPOCHS} epochs, focal loss, A10G)…"
         _log("Starting training…")
-        try:
-            trainer.train(resume_from_checkpoint=resume_checkpoint)
-        except ValueError as _exc:
-            if "parameter group" in str(_exc) and resume_checkpoint:
-                _log(
-                    f"Optimizer state mismatch ({_exc}). "
-                    "Loading model weights only and restarting training from scratch."
-                )
-                # Reload just the model weights — drops the incompatible optimizer state
-                trainer.model = AutoModelForSequenceClassification.from_pretrained(
-                    resume_checkpoint,
-                    num_labels=num_labels,
-                    id2label=id2label,
-                    label2id=label2id,
-                    ignore_mismatched_sizes=True,
-                )
-                trainer.train()  # fresh optimizer, but weights from checkpoint
-            else:
-                raise
+        trainer.train()
         _log("Training complete.")
 
         _status = "Evaluating…"
