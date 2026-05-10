@@ -1218,15 +1218,18 @@ def heuristic_classify(text: str) -> ModelPrediction:  # noqa: C901 – intentio
             # Could be monoalphabetic substitution OR transposition with no bigram signal
             if transp >= 0.35 and bgm <= 0.50:
                 return _deterministic("columnar_transposition", 0.38)
-            # Joseon yeokhak / Geez monastic: historical monoalphabetic variants
-            # with high IoC but characteristically limited unique letter set (≤ 22).
-            if _uniq <= 20 and n_letters >= 40:
-                return _deterministic("joseon_yeokhak", 0.28)
+            # Joseon yeokhak: high chi (≈ 418), no Kasiski, limited alphabet ≤ 20.
+            # Lower n_letters threshold vs older rule to catch shorter examples.
+            if _uniq <= 20 and n_letters >= 25 and raw_chi > 200 and kas_support == 0:
+                return _deterministic("joseon_yeokhak", 0.30)
             # Wheatstone: rotor-based monoalphabetic, IoC near 0.060-0.065.
             if 0.058 <= ioc < 0.065 and _uniq <= 22 and n_letters >= 30:
                 return _deterministic("wheatstone", 0.30)
             return _deterministic("monoalphabetic", 0.38)
         # IoC ≥ 0.068 — very high; scytale/stager_route have high IoC
+        # Geez monastic: very high chi (≈ 501), robust Kasiski signal (≥ 4), limited alphabet.
+        if raw_chi > 300 and kas_support >= 4 and _uniq <= 18:
+            return _deterministic("geez_monastic", 0.32)
         if ioc >= 0.070:
             if transp >= 0.40:
                 return _deterministic("scytale", 0.38)
@@ -1238,16 +1241,44 @@ def heuristic_classify(text: str) -> ModelPrediction:  # noqa: C901 – intentio
         # Short keys over a Napoleon-square alphabet reduce unique letters to ≤12.
         if _uniq <= 12 and n_letters >= 30:
             return _deterministic("bazeries", 0.38)
-        # Porta cipher: IoC typically 0.049-0.055, key length 2-13
-        # (reciprocal alphabets pairs → distinctive Kasiski pattern)
-        if 0.049 <= ioc < 0.055 and 2 <= fried <= 13 and kas_support >= 2:
-            return _deterministic("porta", 0.30)
+        # Cardano autokey: IoC near lower end (≈ 0.047), high chi (≈ 376), Kasiski support.
+        # Distinguish from standard porta/playfair by lower IoC + high chi.
+        if ioc < 0.050 and raw_chi > 250 and kas_support >= 2:
+            return _deterministic("cardano_autokey", 0.28)
+        # Porta cipher: medium-high IoC (0.049-0.058), very high chi (≈ 481).
+        # Reciprocal alphabet pairs give strong Kasiski signal and non-English chi.
+        # Removed old fried constraint (fried_med ≈ 1.4 — below old 2 <= fried <= 13).
+        if 0.049 <= ioc < 0.058 and raw_chi > 200 and kas_support >= 2:
+            return _deterministic("porta", 0.32)
+        # Fractionated Morse: high-end medium IoC (≈ 0.057), elevated chi (≈ 295),
+        # Kasiski support ≥ 3 (trigraph period from Morse encoding), limited uniq.
+        if ioc >= 0.053 and raw_chi > 180 and kas_support >= 3 and _uniq <= 22:
+            return _deterministic("fractionated_morse", 0.30)
         if 0.049 <= ioc < 0.058:
             return _deterministic("playfair", 0.32)
         return _deterministic("playfair", 0.35)
 
     # --- Low-to-medium IoC (0.040–0.046): polyalphabetic & machine ---------
     if 0.040 <= ioc < 0.046:
+        # High chi in this IoC range signals non-English frequency distribution —
+        # rules out standard Vigenere of English plaintext (chi ≈ 20-80).
+        if raw_chi > 130:
+            # Slidex: strong Kasiski support + very high chi (≈ 554)
+            if kas_support >= 3 and raw_chi > 350:
+                return _deterministic("slidex", 0.28)
+            if kas_support == 0:
+                # Jefferson disk: maximum chi in this bucket (≈ 727), no Kasiski
+                if raw_chi > 450:
+                    return _deterministic("jefferson_disk", 0.28)
+                # Confederate Vigenere: high chi (≈ 409), higher-end IoC (≈ 0.044), no Kasiski
+                if raw_chi > 280 and ioc >= 0.043:
+                    return _deterministic("confederate_vigenere", 0.28)
+                # Hill cipher: high chi (≈ 393), lower-end IoC (≈ 0.042), no Kasiski
+                if raw_chi > 250 and ioc < 0.043:
+                    return _deterministic("hill", 0.28)
+                # Bifid: moderate chi (≈ 190), low-end IoC (≈ 0.042), no Kasiski
+                if raw_chi > 130 and ioc < 0.043:
+                    return _deterministic("bifid", 0.28)
         if 2 <= fried <= 12:
             # Gronsfeld uses digit key (0-9), giving short key lengths (1-6 typical).
             # Its IoC falls here (same as Vigenère), but key is shorter than most
@@ -1303,6 +1334,10 @@ def heuristic_classify(text: str) -> ModelPrediction:  # noqa: C901 – intentio
             return _deterministic("chaocipher", 0.28)  # Chaocipher: extremely flat, IoC ≈ 0.020
         if ioc < 0.031:
             return _deterministic("m209", 0.27)        # M-209 rotor: IoC ≈ 0.028
+        # One-time pad: maximum chi (≈ 686) among all ciphers, all 25-26 letters
+        # represented (uniq ≥ 24), no Kasiski repeats. Most entropic output.
+        if raw_chi > 550 and _uniq >= 24 and kas_support == 0:
+            return _deterministic("one_time_pad", 0.30)
         return _deterministic("enigma", 0.25)
 
     # --- Catch-all for anything remaining ----------------------------------
