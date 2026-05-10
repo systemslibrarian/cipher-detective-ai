@@ -183,7 +183,7 @@ def train() -> None:
             learning_rate=LR,
             warmup_ratio=WARMUP_RATIO,
             label_smoothing_factor=LABEL_SMOOTH,
-            evaluation_strategy="steps",
+            eval_strategy="steps",
             eval_steps=eval_steps,
             save_strategy="steps",
             save_steps=eval_steps,
