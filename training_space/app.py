@@ -44,6 +44,7 @@ LR           = 2e-5
 WARMUP_RATIO = 0.06
 LABEL_SMOOTH = 0.05
 GAMMA        = 2.0        # focal loss gamma
+RESUME_FROM_HUB = True   # resume from latest checkpoint in HUB_MODEL_ID if present
 
 # ── Shared state ──────────────────────────────────────────────────────────────
 _log_lines: list[str] = []
@@ -140,6 +141,23 @@ def train() -> None:
         eval_steps      = max(50, steps_per_epoch // 2)
 
         output_dir = Path("./cipher_model_output")
+
+        # Resume from latest Hub checkpoint if available
+        resume_checkpoint = None
+        if RESUME_FROM_HUB and HF_TOKEN:
+            try:
+                from huggingface_hub import snapshot_download
+                _log(f"Checking for existing checkpoint in {HUB_MODEL_ID}…")
+                ckpt_dir = Path(snapshot_download(HUB_MODEL_ID, token=HF_TOKEN, ignore_patterns=["*.msgpack", "flax_model*"]))
+                # Find highest numbered checkpoint
+                ckpts = sorted(ckpt_dir.glob("checkpoint-*"), key=lambda p: int(p.name.split("-")[1]))
+                if ckpts:
+                    resume_checkpoint = str(ckpts[-1])
+                    _log(f"Resuming from: {ckpts[-1].name}")
+                else:
+                    _log("No checkpoints found — starting fresh.")
+            except Exception as e:
+                _log(f"Could not load checkpoint ({e}) — starting fresh.")
         args = TrainingArguments(
             output_dir=str(output_dir),
             num_train_epochs=EPOCHS,
@@ -178,7 +196,7 @@ def train() -> None:
 
         _status = f"🏋️ Training ({EPOCHS} epochs, focal loss, A10G)…"
         _log("Starting training…")
-        trainer.train()
+        trainer.train(resume_from_checkpoint=resume_checkpoint)
         _log("Training complete.")
 
         # Final eval
