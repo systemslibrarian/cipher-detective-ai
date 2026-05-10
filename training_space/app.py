@@ -222,6 +222,9 @@ def train() -> None:
             dataloader_num_workers=2,
             report_to="none",
             logging_steps=50,
+            push_to_hub=True,
+            hub_model_id=HUB_MODEL_ID,
+            hub_token=HF_TOKEN,
         )
 
         FocalTrainer = make_focal_trainer(cw, gamma=GAMMA)
@@ -254,9 +257,7 @@ def train() -> None:
         _status = "Pushing model to Hub…"
         _log(f"Pushing to {HUB_MODEL_ID}…")
         trainer.push_to_hub(
-            repo_id=HUB_MODEL_ID,
             commit_message=f"trained: macro_f1={_final_metrics.get('eval_macro_f1', '?')}",
-            token=HF_TOKEN,
             blocking=True,
         )
         from huggingface_hub import HfApi
