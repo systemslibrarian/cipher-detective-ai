@@ -329,9 +329,12 @@ ul{{line-height:1.8}}
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    # Training thread starts immediately — no gradio dependency at all
-    thread = threading.Thread(target=train, daemon=True)
-    thread.start()
+    if os.environ.get("TRAIN_ENABLED", "").lower() in ("1", "true", "yes"):
+        thread = threading.Thread(target=train, daemon=True)
+        thread.start()
+    else:
+        _status = "Idle — training disabled. Set TRAIN_ENABLED=1 to start."
+        _log("Training disabled (TRAIN_ENABLED not set). Serving status page only.")
 
     # Serve status page on port 7860 (HF Spaces default)
     server = HTTPServer(("0.0.0.0", 7860), StatusHandler)
