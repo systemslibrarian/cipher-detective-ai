@@ -24,21 +24,8 @@ jobs:
           git remote add space https://systemslibrarian:${HF_TOKEN}@huggingface.co/spaces/systemslibrarian/cipher-detective-ai
           git push space main --force
 
-      - name: Push training_space/ to HF Training Space
-        env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: |
-          python3 -c "
-from huggingface_hub import HfApi
-import os
-api = HfApi(token=os.environ['HF_TOKEN'])
-for fname in ['app.py', 'requirements.txt', 'README.md']:
-    api.upload_file(
-        path_or_fileobj=f'training_space/{fname}',
-        path_in_repo=fname,
-        repo_id='systemslibrarian/cipher-detective-training',
-        repo_type='space',
-        commit_message=f'sync from GitHub: {fname}',
-    )
-    print(f'Synced {fname}')
-"
+      # NOTE: The training_space/ auto-sync step was removed on 2026-05-11
+      # after the cipher-detective-training Space was deleted to stop runaway
+      # A10G billing. The trainer code remains in training_space/ for future
+      # reference but is no longer auto-deployed. To re-enable training,
+      # manually create a new Space and push training_space/ to it once.
