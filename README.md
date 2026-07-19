@@ -162,11 +162,43 @@ python scripts/evaluate_baseline.py \
   --out reports/baseline_metrics.json
 ```
 
-Report includes accuracy, macro F1, per-class precision/recall/F1, confusion matrix, and the dataset's label distribution.
+Report includes accuracy, macro F1, per-class precision/recall/F1, confusion
+matrix, family-level metrics, and the dataset's label distribution. Summarize
+any report with:
+
+```bash
+python scripts/inspect_metrics.py reports/baseline_metrics.json
+```
+
+### Current heuristic baseline (30,104-row held-out test split, 81 classes)
+
+| Metric | Fine-grained (81 classes) | Family-level (7 families) |
+|---|---:|---:|
+| Accuracy | 29.2% | 57.2% |
+| Macro F1 | 0.392 | 0.656 |
+
+Family-level is the honest headline: a large share of fine-grained error is
+between classes that are mathematically indistinguishable from ciphertext
+alone (see **Labels & cipher families** below). Accuracy also depends heavily
+on length — near-perfect above 200 letters, weak under 50, which is itself an
+accurate lesson about classical cryptanalysis.
 
 ---
 
-## 🏷️ Labels
+## 🏷️ Labels & cipher families
+
+Fine-grained labels are grouped into **seven statistical families** (`plain`,
+`mono_substitution`, `polyalphabetic`, `transposition`, `polygraphic`,
+`machine_or_otp`, `code_format`). This matters because many fine labels are
+**mathematically indistinguishable from ciphertext alone** — every well-built
+rotor machine (Enigma, Typex, SIGABA, KL-7, Fialka…) emits a near-uniform
+letter stream, and a Kama-Sutra cipher *is* a monoalphabetic substitution.
+No classifier can honestly separate those; one that appears to is memorizing
+generator artifacts. The evaluation therefore reports **family-level accuracy
+as the headline metric** and fine-grained accuracy as best-effort within a
+family (`label_family()` in `core.py` exposes the mapping). That limitation is
+itself the lesson: indistinguishability from random *is the design goal of
+good cryptography*.
 
 The classifier covers **81 cipher classes**, including:
 
@@ -181,6 +213,7 @@ See [`data/cipher_examples.jsonl`](data/cipher_examples.jsonl) for the full labe
 - [ ] Publish `classical-cipher-corpus` dataset (50k rows).
 - [ ] Train and publish `cipher-detective-classifier`.
 - [ ] Add `screenshots/` images.
+- [x] Cipher-family layer: family-level accuracy reporting + `label_family()` mapping.
 - [x] Hill-climbing solver demo for monoalphabetic substitution (educational only).
 - [x] Per-length and per-difficulty evaluation buckets.
 - [x] Vigenère auto-solver (Kasiski + Friedman key-length estimation).

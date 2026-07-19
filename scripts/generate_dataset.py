@@ -4,7 +4,12 @@ import argparse
 import json
 import random
 import re
+import sys
 from pathlib import Path
+
+# Windows consoles default to cp1252, which cannot encode characters like "→".
+if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf8"):
+    sys.stdout.reconfigure(encoding="utf-8")
 
 ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 AFFINE_A_VALUES = [1, 3, 5, 7, 9, 11, 15, 17, 19, 21, 23, 25]
@@ -265,32 +270,22 @@ def trithemius(s: str) -> str:
 
 
 def porta(s: str, key: str) -> str:
-    """Porta cipher (simplified): 13-alphabet polyalphabetic table."""
-    # Each row shifts both halves; key letter selects which row (A/B→0, C/D→1, …)
-    # Standard Porta mixes both halves of the alphabet in each row.
-    PORTA_ROWS = [
-        "NOPQRSTUVWXYZABCDEFGHIJKLM",
-        "ONPQRSTUVWXYZABCDEFGHIJKLM",
-        "OPNQRSTUVWXYZABCDEFGHIJKLM",  # simplified approximation
-        "OPQNRSTUVWXYZABCDEFGHIJKLM",
-        "OPQRNSTUVWXYZABCDEFGHIJKLM",
-        "OPQRSNUVWXYZABCDEFGHIJKLMT",
-        "OPQRSTUNVWXYZABCDEFGHIJKLM",
-        "OPQRSTUVNWXYZABCDEFGHIJKLM",
-        "OPQRSTUVWNXYZABCDEFGHIJKLM",
-        "OPQRSTUVWXNYZABCDEFGHIJKLM",
-        "OPQRSTUVWXYNZABCDEFGHIJKLM",
-        "OPQRSTUVWXYZNABCDEFGHIJKLM",
-        "OPQRSTUVWXYZANABCDEFGHIJKL",
-    ]
+    """Porta cipher: 13-row reciprocal polyalphabetic table.
+
+    Key letters pair up (A/B→row 0, C/D→row 1, …). In row k, a first-half
+    letter (A–M) maps to N + (index + k) mod 13 and a second-half letter
+    maps back to (index − k) mod 13, so the cipher is self-reciprocal.
+    """
     key = clean(key)
     out, j = [], 0
     for ch in s.upper():
         if ch in ALPHABET:
-            ki = (ALPHABET.index(key[j % len(key)]) // 2) % 13
-            row = PORTA_ROWS[ki]
+            k = (ALPHABET.index(key[j % len(key)]) // 2) % 13
             x = ALPHABET.index(ch)
-            out.append(row[x])
+            if x < 13:
+                out.append(ALPHABET[13 + (x + k) % 13])
+            else:
+                out.append(ALPHABET[(x - 13 - k) % 13])
             j += 1
         else:
             out.append(ch)

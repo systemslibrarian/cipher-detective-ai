@@ -676,19 +676,16 @@ def columnar_transposition_decrypt(text: str, key: str) -> str:
     n = len(letters)
     full_rows, remainder = divmod(n, cols)
     order = sorted(range(cols), key=lambda i: (key_letters[i], i))
-    # Determine how many chars are in each column
-    col_lengths = [full_rows + (1 if rank < remainder else 0)
-                   for rank in [sorted(order).index(o) for o in order]]
-    col_lengths_by_order = [0] * cols
-    for rank, orig_col in enumerate(order):
-        col_lengths_by_order[orig_col] = full_rows + (1 if rank < remainder else 0)
-    # Read each column out of the ciphertext
-    columns: list[str] = []
+    # Column length depends on ORIGINAL column position: when the last row is
+    # partial, the leftmost `remainder` columns of the grid hold one extra char.
+    col_len = [full_rows + (1 if c < remainder else 0) for c in range(cols)]
+    # Ciphertext segments appear in key-sorted order (the order encrypt wrote
+    # them), so walk `order` to slice each original column back out.
+    columns = [""] * cols
     pos = 0
-    for orig_col in range(cols):
-        length = col_lengths_by_order[orig_col]
-        columns.append(letters[pos:pos + length])
-        pos += length
+    for orig_col in order:
+        columns[orig_col] = letters[pos:pos + col_len[orig_col]]
+        pos += col_len[orig_col]
     # Reconstruct row by row
     result = []
     col_ptrs = [0] * cols
@@ -787,6 +784,79 @@ _ALL_LABELS: list[str] = [
     "vernam", "vic", "vigenere", "voynich_render", "wallis_cipher", "wheatstone",
     "zimmermann",
 ]
+
+# ---------------------------------------------------------------------------
+# Cipher families: groups of labels that share a statistical signature.
+#
+# Many fine-grained labels are *mathematically indistinguishable* from
+# ciphertext alone (e.g. every well-built rotor machine emits a near-uniform
+# letter stream; kama_sutra IS a monoalphabetic substitution).  Family-level
+# accuracy is therefore the honest headline metric; fine-grained labels are
+# best-effort within a family.  Assignments follow how each cipher *renders in
+# this corpus*, which occasionally differs from the historical device (the
+# corpus renders lorenz as lightly-garbled plaintext-without-spaces, and its
+# bazeries behaves as a small-alphabet substitution).
+# ---------------------------------------------------------------------------
+CIPHER_FAMILIES: dict[str, str] = {
+    # Readable (or nearly readable) English
+    "plaintext": "plain", "null_cipher": "plain",
+    # One fixed letter-for-letter mapping: English "shape" survives
+    "caesar": "mono_substitution", "caesar_rot": "mono_substitution",
+    "rot13": "mono_substitution", "atbash": "mono_substitution",
+    "affine": "mono_substitution", "monoalphabetic": "mono_substitution",
+    "substitution": "mono_substitution", "kama_sutra": "mono_substitution",
+    "bazeries": "mono_substitution", "joseon_yeokhak": "mono_substitution",
+    "geez_monastic": "mono_substitution",
+    # Repeating / progressive key over the plain alphabet
+    "vigenere": "polyalphabetic", "beaufort": "polyalphabetic",
+    "gronsfeld": "polyalphabetic", "porta": "polyalphabetic",
+    "autokey": "polyalphabetic", "cardano_autokey": "polyalphabetic",
+    "running_key": "polyalphabetic", "trithemius": "polyalphabetic",
+    "confederate_vigenere": "polyalphabetic", "kryptos": "polyalphabetic",
+    "alberti_disk": "polyalphabetic", "slidex": "polyalphabetic",
+    "wheatstone": "polyalphabetic",
+    # Letters unchanged, order scrambled
+    "rail_fence": "transposition", "columnar": "transposition",
+    "columnar_transposition": "transposition",
+    "double_transposition": "transposition", "scytale": "transposition",
+    "stager_route": "transposition",
+    # Digraph / fractionating systems
+    "playfair": "polygraphic", "four_square": "polygraphic",
+    "two_square": "polygraphic", "hill": "polygraphic",
+    "bifid": "polygraphic", "trifid": "polygraphic",
+    "adfgx": "polygraphic", "adfgvx": "polygraphic",
+    "fractionated_morse": "polygraphic",
+    # Rotor machines, stream devices, and one-time systems: near-uniform output
+    "enigma": "machine_or_otp", "typex": "machine_or_otp",
+    "sigaba": "machine_or_otp", "kl7": "machine_or_otp",
+    "fialka": "machine_or_otp", "purple": "machine_or_otp",
+    "red_type_a": "machine_or_otp", "kryha": "machine_or_otp",
+    "geheimschreiber": "machine_or_otp", "lorenz": "machine_or_otp",
+    "m209": "machine_or_otp", "m94": "machine_or_otp",
+    "jefferson_disk": "machine_or_otp", "diana": "machine_or_otp",
+    "one_time_pad": "machine_or_otp", "vernam": "machine_or_otp",
+    "solitaire": "machine_or_otp", "chaocipher": "machine_or_otp",
+    # Distinct formats: digits, symbols, codebooks, non-Latin renders
+    "morse_code": "code_format", "tap_code": "code_format",
+    "pigpen": "code_format", "polybius": "code_format",
+    "bacon_cipher": "code_format", "navajo_code": "code_format",
+    "chinese_telegraph": "code_format", "commercial_code": "code_format",
+    "jn25": "code_format", "zimmermann": "code_format",
+    "culper_ring": "code_format", "book_cipher": "code_format",
+    "arnold_andre": "code_format", "babington": "code_format",
+    "aeneas_tacticus": "code_format", "wallis_cipher": "code_format",
+    "nomenclator": "code_format", "homophonic": "code_format",
+    "nihilist": "code_format", "straddling_checkerboard": "code_format",
+    "vic": "code_format", "argenti": "code_format",
+    "copiale": "code_format", "great_cipher": "code_format",
+    "venona_pad_reuse": "code_format", "voynich_render": "code_format",
+}
+
+
+def label_family(label: str) -> str:
+    """Return the statistical family for a cipher label ("unknown" if unmapped)."""
+    return CIPHER_FAMILIES.get(label, "unknown")
+
 
 # Uniform prior score so every known label appears in the output dict.
 _PRIOR = 1.0 / len(_ALL_LABELS)
@@ -1109,7 +1179,8 @@ def heuristic_classify(text: str) -> ModelPrediction:  # noqa: C901 – intentio
     # mis-classified.  A null cipher embeds the secret in specific positions
     # of an apparently-normal cover text, so "looks like English" is the
     # primary signature of both null_cipher and genuine plaintext.
-    if raw_words >= 3 and raw_chi < 150:
+    # Spaces required: run-together near-English is lorenz, not a cover text.
+    if raw_words >= 3 and raw_chi < 150 and " " in stripped:
         return _deterministic("null_cipher", min(0.75, 0.15 + 0.06 * raw_words))
 
     # For short texts the word list may not produce 2 hits even for correct
@@ -1190,11 +1261,11 @@ def heuristic_classify(text: str) -> ModelPrediction:  # noqa: C901 – intentio
             _best_rf_words = max(c[3] for c in _rf_cands)
             if _best_rf_words >= 2:
                 return _deterministic("rail_fence", 0.52)
-        # Not rail_fence — route by length / IoC for stager_route vs columnar vs double.
-        # stager_route (route/spiral transposition) has very high IoC (≥ 0.063) because
-        # it reads a plaintext grid in a non-linear path — letters stay English-distributed.
-        if ioc >= 0.063:
-            return _deterministic("stager_route", 0.42)
+        # Not rail_fence — route by length for columnar vs double transposition.
+        # NOTE: a previous "IoC ≥ 0.063 → stager_route" gate was wrong ~30x more
+        # often than right (all transpositions preserve English IoC; the exact
+        # value is sampling noise).  stager_route is only claimed via the
+        # X-padding rule above; otherwise the larger transposition classes win.
         if n_letters <= 150:
             return _deterministic("columnar_transposition", 0.45)
         else:
@@ -1202,18 +1273,16 @@ def heuristic_classify(text: str) -> ModelPrediction:  # noqa: C901 – intentio
 
     # --- High IoC (≥ 0.058): monoalphabetic substitution family ------------
     if ioc >= 0.058:
-        # Lorenz: near-plaintext cipher using character substitutions without spaces.
-        # Signature: very low chi (English letter frequencies intact), very high
-        # bigram support (English pair sequences preserved), but few recognisable
-        # words (text is one run-together string with occasional garbled chars).
-        # monoalphabetic FP=0%, rail_fence FP=7% (already handled by transp check).
-        if raw_chi < 50 and bgm > 0.85 and raw_words < 3:
+        # Lorenz: near-plaintext cipher rendered as one run-together string with
+        # occasional garbled chars.  Signature: very low chi (English letter
+        # frequencies intact), very high bigram support, and NO spaces — spaced
+        # readable English is null_cipher and was caught above.
+        if raw_chi < 50 and bgm > 0.85 and " " not in stripped:
             return _deterministic("lorenz", 0.48)
-        # Kama Sutra: paired-alphabet mono that preserves word spaces.
-        # All brute-force checks (atbash, caesar, affine) already ruled out above.
-        # Signature: spaced text, very high IoC, but no English word hits.
-        if " " in stripped and raw_words < 2 and n_letters >= 20:
-            return _deterministic("kama_sutra", 0.45)
+        # NOTE: kama_sutra (paired-alphabet mono) is statistically identical to
+        # any other monoalphabetic substitution, so there is no honest rule for
+        # it; it falls through to the monoalphabetic branch below.  A previous
+        # "spaced text, no word hits" rule was wrong 5x more often than right.
         if 0.058 <= ioc < 0.068:
             # Could be monoalphabetic substitution OR transposition with no bigram signal
             if transp >= 0.35 and bgm <= 0.50:
@@ -1223,7 +1292,9 @@ def heuristic_classify(text: str) -> ModelPrediction:  # noqa: C901 – intentio
             if _uniq <= 20 and n_letters >= 25 and raw_chi > 200 and kas_support == 0:
                 return _deterministic("joseon_yeokhak", 0.30)
             # Wheatstone: rotor-based monoalphabetic, IoC near 0.060-0.065.
-            if 0.058 <= ioc < 0.065 and _uniq <= 22 and n_letters >= 30:
+            # Corpus wheatstone is one run-together block; spaced text in this
+            # regime is far more likely a plain monoalphabetic substitution.
+            if 0.058 <= ioc < 0.065 and _uniq <= 22 and n_letters >= 30 and " " not in stripped:
                 return _deterministic("wheatstone", 0.30)
             return _deterministic("monoalphabetic", 0.38)
         # IoC ≥ 0.068 — very high; scytale/stager_route have high IoC
@@ -1262,7 +1333,10 @@ def heuristic_classify(text: str) -> ModelPrediction:  # noqa: C901 – intentio
     if 0.040 <= ioc < 0.046:
         # High chi in this IoC range signals non-English frequency distribution —
         # rules out standard Vigenere of English plaintext (chi ≈ 20-80).
-        if raw_chi > 130:
+        # Length gate: below ~60 letters chi/IoC are too noisy to justify an
+        # exotic machine-class verdict — short texts fall through to the large
+        # polyalphabetic classes instead.
+        if raw_chi > 130 and n_letters >= 60:
             # Slidex: strong Kasiski support + very high chi (≈ 554)
             if kas_support >= 3 and raw_chi > 350:
                 return _deterministic("slidex", 0.28)
@@ -1290,7 +1364,7 @@ def heuristic_classify(text: str) -> ModelPrediction:  # noqa: C901 – intentio
             # Weak Kasiski + Friedman → machine cipher or weak Vigenere.
             # Machine ciphers (purple, red_type_a, fialka, geheimschreiber, diana)
             # tend to have no strong Kasiski pattern (kas_support 0-1).
-            if kas_support <= 1 and n_letters >= 40:
+            if kas_support <= 1 and n_letters >= 60:
                 if ioc < 0.042:
                     return _deterministic("purple", 0.28)
                 if 0.042 <= ioc < 0.044:
@@ -1301,7 +1375,7 @@ def heuristic_classify(text: str) -> ModelPrediction:  # noqa: C901 – intentio
         # When Friedman estimate is out of normal polyalphabetic range, lean Beaufort.
         if kas_support == 0:
             # Machine cipher with near-random output and no Kasiski
-            if ioc < 0.042 and n_letters >= 20:
+            if ioc < 0.042 and n_letters >= 60:
                 if _uniq <= 18:
                     return _deterministic("red_type_a", 0.28)
                 return _deterministic("fialka", 0.28)
@@ -1349,6 +1423,8 @@ def build_explanation(text: str, pred: ModelPrediction) -> str:
     ev = analyze_evidence(text)
     lines = [
         f"### Detective conclusion: `{pred.label}`",
+        f"**Cipher family:** `{label_family(pred.label)}` — family verdicts are far more "
+        "reliable than exact labels; several ciphers are statistically identical.  ",
         f"**Confidence:** {pred.confidence:.1%}  ",
         f"**Prediction source:** {pred.source}",
         "",

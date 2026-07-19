@@ -10,7 +10,7 @@ from pathlib import Path
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, f1_score
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from core import heuristic_classify
+from core import heuristic_classify, label_family
 
 
 def load_rows(path: str):
@@ -48,6 +48,27 @@ def evaluate(y_true, y_pred, labels):
             y_true, y_pred, labels=labels, output_dict=True, zero_division=0
         ),
         "confusion_matrix": confusion_matrix(y_true, y_pred, labels=labels).tolist(),
+    }
+
+
+def family_metrics(y_true, y_pred):
+    """Family-level metrics: many fine labels share a statistical signature
+    (all rotor machines emit near-uniform letters), so the family verdict is
+    the honest headline number."""
+    ft = [label_family(y) for y in y_true]
+    fp = [label_family(y) for y in y_pred]
+    # Score over families present in the truth: stray predicted families
+    # (e.g. "unknown" from too_short) still count as misses for their true
+    # class, but a zero-support class must not drag down the macro average.
+    fams = sorted(set(ft))
+    return {
+        "accuracy": accuracy_score(ft, fp),
+        "macro_f1": f1_score(ft, fp, labels=fams, average="macro", zero_division=0),
+        "classification_report": classification_report(
+            ft, fp, labels=fams, output_dict=True, zero_division=0
+        ),
+        "confusion_matrix": confusion_matrix(ft, fp, labels=fams).tolist(),
+        "families": fams,
     }
 
 
@@ -122,11 +143,15 @@ def main():
     y_true = [r["label"] for r in rows]
     labels = sorted(set(y_true))
 
-    y_pred_heur = [heuristic_classify(t).label for t in texts]
-    # Map any "too_short" predictions to a neutral fallback so metrics stay well-defined.
-    y_pred_heur = [p if p in labels else "plaintext" for p in y_pred_heur]
+    y_pred_raw = [heuristic_classify(t).label for t in texts]
+    # Map any "too_short" predictions to a neutral fallback so fine-grained
+    # metrics stay well-defined.  Family metrics score the RAW predictions:
+    # "too_short" maps to family "unknown" and counts as wrong, instead of
+    # polluting the plain family with fake false positives.
+    y_pred_heur = [p if p in labels else "plaintext" for p in y_pred_raw]
 
     heuristic_block = evaluate(y_true, y_pred_heur, labels)
+    heuristic_block["family_level"] = family_metrics(y_true, y_pred_raw)
     heuristic_block["by_difficulty"] = bucketed_metrics(rows, y_true, y_pred_heur, labels, "difficulty")
     heuristic_block["by_length"] = bucketed_metrics(rows, y_true, y_pred_heur, labels, "length_bucket")
 
@@ -150,6 +175,7 @@ def main():
         if ml_preds is not None:
             ml_preds = [p if p in labels else "plaintext" for p in ml_preds]
             ml_block = evaluate(y_true, ml_preds, labels)
+            ml_block["family_level"] = family_metrics(y_true, ml_preds)
             ml_block["by_difficulty"] = bucketed_metrics(rows, y_true, ml_preds, labels, "difficulty")
             ml_block["by_length"] = bucketed_metrics(rows, y_true, ml_preds, labels, "length_bucket")
             report["transformer"] = {"model_id": args.model, **ml_block}
@@ -157,9 +183,14 @@ def main():
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(report, indent=2), encoding="utf-8")
-    summary = {"out": str(out), "heuristic_accuracy": report["heuristic"]["accuracy"]}
+    summary = {
+        "out": str(out),
+        "heuristic_accuracy": report["heuristic"]["accuracy"],
+        "heuristic_family_accuracy": report["heuristic"]["family_level"]["accuracy"],
+    }
     if "transformer" in report:
         summary["transformer_accuracy"] = report["transformer"]["accuracy"]
+        summary["transformer_family_accuracy"] = report["transformer"]["family_level"]["accuracy"]
     print(json.dumps(summary, indent=2))
 
 

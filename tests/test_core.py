@@ -9,15 +9,19 @@ from pathlib import Path
 import pytest
 
 from core import (
+    _ALL_LABELS,
+    CIPHER_FAMILIES,
     affine_decrypt,
     affine_encrypt,
     atbash,
+    beaufort_decrypt,
     best_affine_candidates,
     best_caesar_candidates,
     caesar_encrypt,
     caesar_shift,
     chi_squared_for_english,
     clean_letters,
+    columnar_transposition_decrypt,
     columnar_transposition_encrypt,
     english_bigram_score,
     friedman_key_length,
@@ -25,6 +29,8 @@ from core import (
     hill_climb_substitution,
     index_of_coincidence,
     kasiski_key_lengths,
+    label_family,
+    rail_fence_decrypt,
     rail_fence_encrypt,
     shannon_entropy,
     substitution_encrypt,
@@ -114,6 +120,39 @@ def test_substitution_is_permutation():
 def test_substitution_invalid_mapping_raises():
     with pytest.raises(ValueError):
         substitution_encrypt("HELLO", "ABC")  # not a 26-letter perm
+
+
+def test_beaufort_known_example():
+    # Classic test vector: Beaufort with key FORTIFICATION.
+    assert (
+        beaufort_decrypt("DEFENDTHEEASTWALLOFTHECASTLE", "FORTIFICATION")
+        == "CKMPVCPVWPIWUJOGIUAPVWRIWUUK"
+    )
+
+
+def test_beaufort_is_reciprocal():
+    msg = "MEETMEATMIDNIGHT"
+    assert beaufort_decrypt(beaufort_decrypt(msg, "GREEK"), "GREEK") == msg
+
+
+def test_beaufort_empty_key_raises():
+    with pytest.raises(ValueError):
+        beaufort_decrypt("HELLO", "123")
+
+
+@pytest.mark.parametrize("rails", [2, 3, 5, 7])
+def test_rail_fence_round_trip(rails):
+    msg = clean_letters("WE ARE DISCOVERED FLEE AT ONCE")
+    assert rail_fence_decrypt(rail_fence_encrypt(msg, rails), rails) == msg
+
+
+@pytest.mark.parametrize("key", ["ZEBRA", "KEY", "LONGSECRETKEY"])
+def test_columnar_round_trip(key):
+    msg = clean_letters("THE QUICK BROWN FOX JUMPS OVER THE LAZY DOG")
+    enc = columnar_transposition_encrypt(msg, key)
+    # Encrypt pads to a full rectangle with X, so compare against padded msg.
+    padded = msg + "X" * ((-len(msg)) % len(key))
+    assert columnar_transposition_decrypt(enc, key) == padded
 
 
 # ---------------------------------------------------------------------------
@@ -233,6 +272,30 @@ def test_heuristic_plaintext_label():
 def test_heuristic_short_sample_marked_uncertain():
     pred = heuristic_classify("ABCDE")
     assert pred.confidence <= 0.30
+
+
+def test_heuristic_lorenz_vs_null_cipher():
+    # Run-together near-English (no spaces) is lorenz, not null_cipher.
+    runon = "THECREWANDTHECAPTAINSAILEDFORTHESOUTHERNOCEANWITHTHETIDE"
+    assert heuristic_classify(runon).label == "lorenz"
+    # The same words WITH spaces are a cover text.
+    spaced = "THE CREW AND THE CAPTAIN SAILED FOR THE SOUTHERN OCEAN WITH THE TIDE"
+    assert heuristic_classify(spaced).label == "null_cipher"
+
+
+# ---------------------------------------------------------------------------
+# Cipher families
+# ---------------------------------------------------------------------------
+
+def test_every_label_has_a_family():
+    assert set(CIPHER_FAMILIES) == set(_ALL_LABELS)
+
+
+def test_label_family_lookup():
+    assert label_family("caesar") == "mono_substitution"
+    assert label_family("enigma") == "machine_or_otp"
+    assert label_family("rail_fence") == "transposition"
+    assert label_family("no_such_cipher") == "unknown"
 
 
 # ---------------------------------------------------------------------------
@@ -363,4 +426,17 @@ def test_dataset_generator_seed_reproducible(tmp_path):
     subprocess.run(base + ["--out", str(a)], check=True, cwd=REPO_ROOT)
     subprocess.run(base + ["--out", str(b)], check=True, cwd=REPO_ROOT)
     assert a.read_text() == b.read_text()
+
+
+def test_generator_porta_is_reciprocal():
+    sys.path.insert(0, str(REPO_ROOT / "scripts"))
+    from generate_dataset import porta
+
+    msg = "ATTACKATDAWN"
+    enc = porta(msg, "FORTRESS")
+    assert enc != msg
+    assert porta(enc, "FORTRESS") == msg
+    # Every Porta row maps first-half letters into the second half and back.
+    for p, c in zip(msg, enc):
+        assert (p <= "M") != (c <= "M")
 
