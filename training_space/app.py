@@ -20,6 +20,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from datasets import load_dataset
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 from transformers import (
@@ -31,7 +32,6 @@ from transformers import (
     Trainer,
     TrainingArguments,
 )
-import torch.nn.functional as F
 
 # ── Config ────────────────────────────────────────────────────────────────────
 DATASET_ID   = "systemslibrarian/classical-cipher-corpus"
@@ -104,8 +104,8 @@ def train() -> None:
         _log(f"  train={len(ds['train']):,}  val={len(ds['validation']):,}")
 
         labels_sorted = sorted(set(ds["train"]["label"]))
-        label2id = {l: i for i, l in enumerate(labels_sorted)}
-        id2label  = {i: l for l, i in label2id.items()}
+        label2id = {lbl: i for i, lbl in enumerate(labels_sorted)}
+        id2label  = {i: lbl for lbl, i in label2id.items()}
         num_labels = len(labels_sorted)
         _log(f"  {num_labels} labels")
 
@@ -117,7 +117,7 @@ def train() -> None:
             return tokenizer(batch["ciphertext"], truncation=True, max_length=MAX_LEN)
 
         def encode_label(batch):
-            batch["labels"] = [label2id[l] for l in batch["label"]]
+            batch["labels"] = [label2id[lbl] for lbl in batch["label"]]
             return batch
 
         ds = ds.map(tokenize,     batched=True, batch_size=512, remove_columns=["ciphertext"])

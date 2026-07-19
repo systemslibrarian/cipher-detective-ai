@@ -437,6 +437,6 @@ def test_generator_porta_is_reciprocal():
     assert enc != msg
     assert porta(enc, "FORTRESS") == msg
     # Every Porta row maps first-half letters into the second half and back.
-    for p, c in zip(msg, enc):
+    for p, c in zip(msg, enc, strict=True):
         assert (p <= "M") != (c <= "M")
 

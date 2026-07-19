@@ -112,8 +112,8 @@ def main() -> None:
     random.shuffle(balanced)
     print(
         f"Balanced corpus: {len(balanced):,} examples "
-        f"(cap={cap}/class, min={min(len(by_label[l]) for l in labels)}, "
-        f"max={max(len(by_label[l]) for l in labels)} before cap)"
+        f"(cap={cap}/class, min={min(len(by_label[lbl]) for lbl in labels)}, "
+        f"max={max(len(by_label[lbl]) for lbl in labels)} before cap)"
     )
 
     # ------------------------------------------------------------------
@@ -170,7 +170,7 @@ def main() -> None:
     write_jsonl(val_rows, out_dir / "val.jsonl")
     write_jsonl(test_rows, out_dir / "test.jsonl")
 
-    print(f"\nSummary:")
+    print("\nSummary:")
     print(f"  Train : {len(train_rows):,} examples")
     print(f"  Val   : {len(val_rows):,} examples")
     print(f"  Test  : {len(test_rows):,} examples")
@@ -181,7 +181,7 @@ def main() -> None:
     for r in train_rows:
         by_label_train_final[r["label"]] += 1
     smallest = sorted(by_label_train_final.items(), key=lambda x: x[1])[:5]
-    print(f"\n  5 smallest training classes after balancing:")
+    print("\n  5 smallest training classes after balancing:")
     for label, n in smallest:
         print(f"    {label:40s} {n}")
 
