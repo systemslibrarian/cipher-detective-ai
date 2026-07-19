@@ -11,10 +11,12 @@ Educational use only. This does not break modern encryption.
 """
 from __future__ import annotations
 
+import json
 import math
 import re
 from collections import Counter
 from dataclasses import dataclass
+from pathlib import Path
 
 from ngram_tables import _BIGRAM_LOG_PROB, _QUADGRAM_LOG_PROB, _TRIGRAM_LOG_PROB
 
@@ -56,6 +58,19 @@ COMMON_WORDS = [
 _SHORT_WORDS = frozenset(w for w in COMMON_WORDS if len(w) <= 3)
 BIGRAMS = ["TH", "HE", "IN", "ER", "AN", "RE", "ON", "AT", "EN", "ND", "TI", "ES", "OR", "TE"]
 TRIGRAMS = ["THE", "AND", "ING", "ION", "ENT", "HER", "FOR", "THA", "NTH", "INT"]
+
+# Common historical Vigenère keywords, tried before the statistical attack.
+# On short ciphertexts (too few letters per column for chi-squared to grip) a
+# known keyword recovers the plaintext where column analysis cannot.
+COMMON_KEYWORDS = [
+    "KEY", "CODE", "SECRET", "CIPHER", "PASSWORD", "ENIGMA", "SPHINX", "RIDDLE",
+    "SHADOW", "VICTORY", "FORTRESS", "CASTLE", "DRAGON", "PHANTOM", "LIBERTY",
+    "FREEDOM", "JUSTICE", "EMPIRE", "LEMON", "MELON", "MUSEUM", "LIBRARY",
+    "SIGNAL", "AUTUMN", "WINTER", "SUMMER", "SPRING", "THUNDER", "STORM",
+    "EAGLE", "FALCON", "RAVEN", "TIGER", "COBRA", "VIPER", "ORACLE", "MATRIX",
+    "GENERAL", "COLONEL", "CAPTAIN", "SOLDIER", "BATTLE", "NELSON", "CAESAR",
+    "NAPOLEON", "WELLINGTON", "GOLD", "SILVER", "DIAMOND", "CRYSTAL",
+]
 
 @dataclass
 class ModelPrediction:
@@ -401,9 +416,169 @@ def vigenere_auto_solve(
         ws = word_score(plaintext)
         results.append((key, plaintext, chi, ws, english_bigram_score(plain_letters)))
 
+    # Dictionary pass: historical Vigenère keys were words. On short texts the
+    # statistical attack has too few letters per column, but a common keyword
+    # decodes cleanly — this is how real cryptanalysts often started.
+    for key in COMMON_KEYWORDS:
+        if key in seen_keys or len(key) > max_key_len:
+            continue
+        seen_keys.add(key)
+        plaintext = vigenere_decrypt(ciphertext, key)
+        plain_letters = clean_letters(plaintext)
+        results.append((key, plaintext, chi_squared_for_english(plain_letters),
+                        word_score(plaintext), english_bigram_score(plain_letters)))
+
     # Word hits first, then bigram structure (chi is too noisy on short text).
     results.sort(key=lambda x: (-x[3], -x[4], x[2]))
     return [(k, p, c, w) for k, p, c, w, _ in results[:top_n]]
+
+
+def beaufort_auto_solve(
+    ciphertext: str,
+    max_key_len: int = 15,
+    top_n: int = 5,
+) -> list[tuple[str, str, float, int]]:
+    """Auto-solve a Beaufort cipher (reciprocal Vigenère variant).
+
+    Same Kasiski/Friedman key-length search as Vigenère, but each column is a
+    Beaufort cipher ``p = (k - c) mod 26``, so the key letter is chosen to
+    minimise chi-squared under that operation. Returns the same
+    ``(key, plaintext, chi_sq, word_count)`` shape.
+    """
+    letters = clean_letters(ciphertext)
+    if len(letters) < 20:
+        return []
+
+    kasiski = kasiski_key_lengths(letters, top=5)
+    fried = friedman_key_length(letters)
+    key_lens: set[int] = {k for k, _ in kasiski[:4] if 2 <= k <= max_key_len}
+    if fried:
+        key_lens |= {k for k in (int(fried), round(fried)) if 2 <= k <= max_key_len}
+    key_lens |= set(range(2, min(9, max_key_len + 1)))
+
+    def _decrypt_letters(kl: list[str], klen: int) -> str:
+        return "".join(
+            ALPHABET[(ALPHABET.index(kl[i % klen]) - ALPHABET.index(c)) % 26]
+            for i, c in enumerate(letters)
+        )
+
+    results: list[tuple[str, str, float, int, float]] = []
+    seen: set[str] = set()
+    for key_len in sorted(key_lens):
+        key_chars = []
+        for col in range(key_len):
+            stream = letters[col::key_len]
+            best_chi, best_k = float("inf"), 0
+            for s in range(26):
+                dec = "".join(ALPHABET[(s - ALPHABET.index(c)) % 26] for c in stream)
+                chi = chi_squared_for_english(dec)
+                if chi < best_chi:
+                    best_chi, best_k = chi, s
+            key_chars.append(ALPHABET[best_k])
+
+        # Coordinate descent on full-text bigram score: fixes key letters that
+        # per-column chi got wrong when columns are short (same refinement as
+        # the Vigenère solver).
+        best_bg = english_bigram_score(_decrypt_letters(key_chars, key_len))
+        for _ in range(3):
+            improved = False
+            for i in range(key_len):
+                original = key_chars[i]
+                for cand in ALPHABET:
+                    if cand == original:
+                        continue
+                    key_chars[i] = cand
+                    bg = english_bigram_score(_decrypt_letters(key_chars, key_len))
+                    if bg > best_bg:
+                        best_bg, original, improved = bg, cand, True
+                key_chars[i] = original
+            if not improved:
+                break
+
+        key = "".join(key_chars)
+        if key in seen:
+            continue
+        seen.add(key)
+        plaintext = beaufort_decrypt(ciphertext, key)
+        pl = clean_letters(plaintext)
+        results.append((key, plaintext, chi_squared_for_english(pl),
+                        word_score(plaintext), english_bigram_score(pl)))
+
+    results.sort(key=lambda x: (-x[3], -x[4], x[2]))
+    return [(k, p, c, w) for k, p, c, w, _ in results[:top_n]]
+
+
+def columnar_auto_solve(
+    ciphertext: str,
+    max_cols: int = 8,
+    top_n: int = 5,
+    seed: int | None = 42,
+) -> list[tuple[str, str, float, int]]:
+    """Auto-solve a columnar transposition without the key.
+
+    Only the column *ordering* is secret (the letters are unchanged), so for
+    each candidate column count we hill-climb the permutation — swapping pairs
+    of columns and keeping swaps that raise the quadgram score. Returns
+    ``(recovered_key_order, plaintext, quadgram_score, word_count)`` where the
+    "key order" is a digit string giving the read order of columns.
+    """
+    import random as _random
+
+    letters = clean_letters(ciphertext)
+    n = len(letters)
+    if n < 12:
+        return []
+    rng = _random.Random(seed)
+
+    def _decode(cols: int, order: list[int]) -> str:
+        # `order` is the read order used at encryption time (which original
+        # column each ciphertext segment belongs to). Rebuild rows from it.
+        full_rows, remainder = divmod(n, cols)
+        col_len = [full_rows + (1 if c < remainder else 0) for c in range(cols)]
+        columns = [""] * cols
+        pos = 0
+        for orig_col in order:
+            columns[orig_col] = letters[pos:pos + col_len[orig_col]]
+            pos += col_len[orig_col]
+        out = []
+        ptr = [0] * cols
+        for _ in range(full_rows + (1 if remainder else 0)):
+            for c in range(cols):
+                if ptr[c] < len(columns[c]):
+                    out.append(columns[c][ptr[c]])
+                    ptr[c] += 1
+        return "".join(out)
+
+    results: list[tuple[str, str, float, int]] = []
+    for cols in range(2, max_cols + 1):
+        if cols > n:
+            break
+        best_order = list(range(cols))
+        best_score = english_quadgram_score(_decode(cols, best_order))
+        for restart in range(6):
+            order = list(range(cols))
+            if restart:
+                rng.shuffle(order)
+            score = english_quadgram_score(_decode(cols, order))
+            improved = True
+            while improved:
+                improved = False
+                for i in range(cols):
+                    for j in range(i + 1, cols):
+                        order[i], order[j] = order[j], order[i]
+                        s = english_quadgram_score(_decode(cols, order))
+                        if s > score:
+                            score, improved = s, True
+                        else:
+                            order[i], order[j] = order[j], order[i]
+            if score > best_score:
+                best_score, best_order = score, order[:]
+        plaintext = _decode(cols, best_order)
+        results.append(("".join(str(c) for c in best_order), plaintext,
+                        round(best_score, 3), word_score(plaintext)))
+
+    results.sort(key=lambda x: (-x[3], -x[2]))
+    return results[:top_n]
 
 
 def playfair_double_score(letters: str) -> float:
@@ -922,7 +1097,60 @@ def _deterministic(label: str, confidence: float) -> ModelPrediction:
     return ModelPrediction(label, confidence, scores, "heuristic")
 
 
-def heuristic_classify(text: str) -> ModelPrediction:  # noqa: C901 – intentionally long
+def _load_calibration_map() -> list[tuple[float, float]]:
+    """Load the isotonic confidence->accuracy breakpoints, or [] if absent."""
+    path = Path(__file__).resolve().parent / "calibration_map.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    pts = sorted((float(k), float(v)) for k, v in
+                 data.get("fine_confidence_to_accuracy", {}).items())
+    return pts
+
+
+_CALIBRATION_MAP = _load_calibration_map()
+
+
+def calibrate_confidence(raw: float) -> float:
+    """Map a raw heuristic confidence to its empirical accuracy via piecewise-
+    linear interpolation over the isotonic calibration curve (from
+    ``scripts/calibrate_confidence.py``). Identity if no map is present.
+
+    Without this the raw confidences are badly miscalibrated — a raw 0.26
+    corresponds to ~4% real accuracy, a raw 0.86 to ~97% — so an unvarnished
+    number would mislead the very people the exhibit is teaching to weigh
+    evidence.
+    """
+    pts = _CALIBRATION_MAP
+    if not pts:
+        return raw
+    if raw <= pts[0][0]:
+        return pts[0][1]
+    if raw >= pts[-1][0]:
+        return pts[-1][1]
+    for (x0, y0), (x1, y1) in zip(pts, pts[1:], strict=False):
+        if x0 <= raw <= x1:
+            t = (raw - x0) / (x1 - x0) if x1 > x0 else 0.0
+            return round(y0 + t * (y1 - y0), 4)
+    return raw
+
+
+def heuristic_classify(text: str) -> ModelPrediction:
+    """Transparent heuristic classifier with calibrated confidence.
+
+    Thin wrapper over :func:`_heuristic_classify_raw` that replaces the raw
+    (hand-tuned) confidence with its empirically-calibrated value, so a
+    reported N% means "right about N% of the time" on the test distribution.
+    """
+    pred = _heuristic_classify_raw(text)
+    cal = calibrate_confidence(pred.confidence)
+    if cal == pred.confidence:
+        return pred
+    return ModelPrediction(pred.label, cal, pred.scores, pred.source)
+
+
+def _heuristic_classify_raw(text: str) -> ModelPrediction:  # noqa: C901 – intentionally long
     """Multi-tier transparent heuristic classifier covering all 81 cipher labels.
 
     Tier 1 – Definitive character-set / format rules: non-alphabetic or highly

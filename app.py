@@ -22,6 +22,7 @@ from core import (
     affine_encrypt,
     analyze_evidence,
     atbash,
+    beaufort_auto_solve,
     beaufort_decrypt,
     best_affine_candidates,
     best_caesar_candidates,
@@ -31,6 +32,7 @@ from core import (
     caesar_shift,
     chi_squared_for_english,
     clean_letters,
+    columnar_auto_solve,
     columnar_transposition_decrypt,
     columnar_transposition_encrypt,
     heuristic_classify,
@@ -335,6 +337,8 @@ DECODE_METHODS = [
     "auto-best-caesar",
     "auto-best-affine",
     "auto-vigenere",
+    "auto-beaufort",
+    "auto-columnar",
     "auto-rail-fence",
     "caesar_rot",
     "atbash",
@@ -383,6 +387,24 @@ def try_decode(ciphertext: str, method: str, key_text: str) -> tuple[str, str]:
         for rails, decoded, chi, ws in cands:
             lines.append(f"| {rails} | {ws} | {chi:.1f} | `{decoded[:70]}` |")
         return "\n".join(lines), "_Brute-forced rail counts 2–15, ranked by English-word matches then chi-squared._"
+
+    if method == "auto-beaufort":
+        cands = beaufort_auto_solve(ciphertext, max_key_len=15, top_n=5)
+        if not cands:
+            return "_Need at least 20 letters for Beaufort auto-solve._", ""
+        lines = ["### Auto Beaufort results", "| Key | Word clues | Chi² | Plaintext preview |", "|---|---:|---:|---|"]
+        for key, plaintext, chi, ws in cands:
+            lines.append(f"| `{key}` | {ws} | {chi:.1f} | `{clean_letters(plaintext)[:65]}` |")
+        return "\n".join(lines), "_Kasiski + Friedman key-length estimation, then per-column Beaufort (reciprocal Vigenère) on each key position._"
+
+    if method == "auto-columnar":
+        cands = columnar_auto_solve(ciphertext, max_cols=8, top_n=5)
+        if not cands:
+            return "_Need at least 12 letters for columnar auto-solve._", ""
+        lines = ["### Auto columnar results", "| Column order | Word clues | Quadgram | Plaintext preview |", "|---|---:|---:|---|"]
+        for order, plaintext, qg, ws in cands:
+            lines.append(f"| `{order}` | {ws} | {qg} | `{clean_letters(plaintext)[:60]}` |")
+        return "\n".join(lines), "_For each column count 2–8, hill-climbs the column ordering to maximise English quadgram score (the key letters themselves are irrelevant — only their sort order matters)._"
 
     if method == "atbash":
         result = atbash(ciphertext)

@@ -18,11 +18,15 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf8"):
 from core import (
     ALPHABET,
     affine_encrypt,
+    beaufort_auto_solve,
+    beaufort_decrypt,
     best_affine_candidates,
     best_caesar_candidates,
     best_rail_fence_candidates,
     caesar_encrypt,
     clean_letters,
+    columnar_auto_solve,
+    columnar_transposition_encrypt,
     hill_climb_substitution,
     rail_fence_encrypt,
     substitution_encrypt,
@@ -40,14 +44,18 @@ SENTENCES = [
     "PLEASE DELIVER THE PACKAGE TO THE HARBOR MASTER BEFORE THE EVENING TIDE ARRIVES",
     "KNOWLEDGE OF LETTER FREQUENCIES ALLOWS ANALYSTS TO BREAK SIMPLE SUBSTITUTION QUICKLY",
 ]
-KEYS = ["FORTRESS", "LEMON", "CIPHER", "AUTUMN", "LIBRARY", "SIGNAL"]
+# Deliberately NOT in core.COMMON_KEYWORDS, so the Vigenère/Beaufort numbers
+# measure the statistical attack itself, not dictionary lookups. (The keyword
+# dictionary is a genuine help on common keys, but benchmarking against keys it
+# already contains would be measuring the test, not the solver.)
+KEYS = ["MARBLE", "PENCIL", "GARDEN", "PLANET", "COPPER", "WALNUT"]
 
 
 def truncate(s: str, n: int) -> str:
     return clean_letters(s)[:n]
 
 
-def bench(trials: int, seed: int):
+def bench(trials: int, seed: int) -> dict:
     rng = random.Random(seed)
     lengths = [40, 80, 160, 300]
     results: dict[str, dict[int, list[int]]] = {}
@@ -82,6 +90,19 @@ def bench(trials: int, seed: int):
             got = clean_letters(sols[0][1]) if sols else ""
             record("vigenere_auto", n, got == pt)
 
+            key = rng.choice(KEYS)
+            ct = beaufort_decrypt(pt, key)  # Beaufort encrypt == decrypt
+            sols = beaufort_auto_solve(ct)
+            got = clean_letters(sols[0][1]) if sols else ""
+            record("beaufort_auto", n, got == pt)
+
+            key = rng.choice(KEYS)
+            ct = columnar_transposition_encrypt(pt, key)
+            sols = columnar_auto_solve(ct)
+            padded = pt + "X" * ((-len(pt)) % len(key))
+            got = clean_letters(sols[0][1]) if sols else ""
+            record("columnar_auto", n, got == padded)
+
             rails = rng.randrange(2, 8)
             ct = rail_fence_encrypt(pt, rails)
             rcands = best_rail_fence_candidates(ct, max_rails=10)
@@ -98,20 +119,56 @@ def bench(trials: int, seed: int):
                 record("substitution_hillclimb", n, correct >= 0.90)
 
     print(f"{'solver':24s}" + "".join(f"  n={n:<5d}" for n in lengths))
+    rates: dict[tuple[str, int], float] = {}
     for solver, by_n in results.items():
         row = f"{solver:24s}"
         for n in lengths:
             if n in by_n:
                 vals = by_n[n]
-                row += f"  {100*sum(vals)/len(vals):5.1f}%"
+                rate = sum(vals) / len(vals)
+                rates[(solver, n)] = rate
+                row += f"  {100*rate:5.1f}%"
             else:
                 row += "      —"
         print(row)
+    return rates
+
+
+# Minimum success rates the solvers must clear at the given length. Set well
+# below observed performance so normal variance doesn't cause false failures,
+# but high enough to catch a real regression (e.g. a solver dropping to 0%).
+_GATE = {
+    ("caesar_auto", 80): 0.90,
+    ("affine_auto", 160): 0.90,
+    ("vigenere_auto", 160): 0.80,
+    ("beaufort_auto", 160): 0.80,
+    ("columnar_auto", 160): 0.50,
+    ("railfence_auto", 160): 0.90,
+    ("substitution_hillclimb", 300): 0.70,
+}
+
+
+def assert_gate(rates: dict[tuple[str, int], float]) -> None:
+    failures = []
+    for (solver, n), floor in _GATE.items():
+        got = rates.get((solver, n))
+        if got is None or got < floor:
+            failures.append(f"{solver}@{n}: {got if got is not None else 'missing'} < {floor}")
+    if failures:
+        print("SOLVER REGRESSION GATE FAILED:")
+        for f in failures:
+            print(f"  {f}")
+        sys.exit(1)
+    print("solver regression gate: PASS")
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--trials", type=int, default=30)
     ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--assert-gate", action="store_true",
+                    help="Exit non-zero if any solver falls below its minimum success rate.")
     args = ap.parse_args()
-    bench(args.trials, args.seed)
+    rates = bench(args.trials, args.seed)
+    if args.assert_gate:
+        assert_gate(rates)

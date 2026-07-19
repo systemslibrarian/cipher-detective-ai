@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -18,6 +19,19 @@ from transformers import (
     Trainer,
     TrainingArguments,
 )
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from core import CIPHER_FAMILIES  # noqa: E402
+
+
+def char_tokenize_text(text: str) -> str:
+    """Space out every character so a subword tokenizer emits one token per
+    character.  Ciphertext has no word structure for WordPiece/BPE to exploit —
+    ``QK`` and ``QUICK`` share no meaningful subwords — so character granularity
+    is the right inductive bias.  Real spaces become ``_`` so word boundaries
+    (a signal for some ciphers) survive.
+    """
+    return " ".join(ch if ch != " " else "_" for ch in text.strip())
 
 
 def load_jsonl(path):
@@ -99,6 +113,19 @@ def main():
              "Smaller: distilroberta-base. Larger: roberta-large.",
     )
     ap.add_argument("--out", default="cipher_model")
+    ap.add_argument(
+        "--char-level", action="store_true",
+        help="Space out every character before tokenizing (one token per char). "
+             "The right inductive bias for ciphertext — WordPiece/BPE subwords "
+             "are meaningless on it. Strongly recommended for this task.",
+    )
+    ap.add_argument(
+        "--family-labels", action="store_true",
+        help="Train the 7-way cipher-FAMILY classifier instead of 81 fine "
+             "labels. Many fine labels are statistically indistinguishable "
+             "(all rotor machines, kama_sutra vs monoalphabetic); the family "
+             "target is the honestly-learnable one and reaches far higher F1.",
+    )
     ap.add_argument("--epochs", type=float, default=10.0,
                     help="Training epochs. 10+ recommended for 81-class accuracy.")
     ap.add_argument("--batch-size", type=int, default=16)
@@ -142,6 +169,12 @@ def main():
 
     rows = load_jsonl(args.data)
 
+    # Optionally collapse fine labels to their statistical family.
+    if args.family_labels:
+        for r in rows:
+            r["label"] = CIPHER_FAMILIES.get(r["label"], "unknown")
+        print("Training on 7-way cipher FAMILIES (honestly-learnable target).")
+
     # Drop labels with fewer than 2 examples (can't stratify-split them).
     from collections import Counter
     label_counts = Counter(r["label"] for r in rows)
@@ -183,7 +216,10 @@ def main():
     tok = AutoTokenizer.from_pretrained(args.model)
 
     def tokenize(batch):
-        return tok(batch["text"], truncation=True, max_length=args.max_length)
+        texts = batch["text"]
+        if args.char_level:
+            texts = [char_tokenize_text(t) for t in texts]
+        return tok(texts, truncation=True, max_length=args.max_length)
 
     ds_train = ds_train.map(tokenize, batched=True)
     ds_test = ds_test.map(tokenize, batched=True)

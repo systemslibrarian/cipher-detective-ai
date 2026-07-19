@@ -59,11 +59,11 @@ The Gradio Space ships with **seven** tabs:
 1. **Detect** — paste ciphertext, get a classification, confidence, and a full evidence report (frequency, IoC, entropy, Caesar/Affine candidates, Kasiski/Friedman indicators, transposition signal). One-click random examples.
 2. **Evidence Notebook** — see the raw evidence without a verdict — useful for teaching step-by-step cryptanalysis.
 3. **Challenge** — generate practice ciphertexts (Caesar, Atbash, Vigenère, Rail-Fence, Columnar, Affine, Substitution) at chosen difficulty.
-4. **Try Decode** — ten decryption methods with automatic English-quality scoring:
-   - *Auto modes (no key needed):* auto-best-Caesar, auto-best-Affine, auto-Vigenère (Kasiski + Friedman), auto-rail-fence (brute-force rails 2–15)
+4. **Try Decode** — twelve decryption methods with automatic English-quality scoring:
+   - *Auto modes (no key needed):* auto-best-Caesar, auto-best-Affine, auto-Vigenère (Kasiski + Friedman + key refinement + keyword dictionary), auto-Beaufort, auto-columnar (column-order hill climb), auto-rail-fence (brute-force rails 2–15)
    - *Keyed modes:* Caesar/ROT, Atbash, Vigenère, Beaufort, Affine, Columnar transposition
 5. **Compare Mode** — run the **transparent heuristic baseline** and the **Transformer classifier** side-by-side, with disagreement analysis.
-6. **Solve Substitution** — hill-climbing solver for monoalphabetic substitution using a blended bigram + trigram log-probability score. Educational only — converges on ~120+ letters of English.
+6. **Solve Substitution** — greedy n-gram descent solver for monoalphabetic substitution, scored by a blended bigram/trigram/quadgram log-probability model. Educational only — solves ~97% of 300-letter English samples, degrades on shorter text.
 7. **About** — project background, educational boundaries, and links.
 
 ---
@@ -183,20 +183,39 @@ alone (see **Labels & cipher families** below). Accuracy also depends heavily
 on length — near-perfect above 200 letters, weak under 50, which is itself an
 accurate lesson about classical cryptanalysis.
 
-### Auto-solver success rates (30 trials per cell, plaintext fully recovered)
+### Auto-solver success rates (20 trials per cell, plaintext fully recovered)
 
 | Solver | 40 letters | 80 | 160 | 300 |
 |---|---:|---:|---:|---:|
 | Caesar (brute force + chi²) | 100% | 100% | 100% | 100% |
-| Affine (312-key brute force) | 50% | 100% | 100% | 100% |
-| Vigenère (Kasiski/Friedman + refinement) | 3% | 67% | 100% | 100% |
-| Rail fence (rail brute force) | 53% | 93% | 100% | 100% |
-| Substitution (greedy n-gram descent) | — | — | 47% | 97% |
+| Affine (312-key brute force) | 45% | 100% | 100% | 100% |
+| Vigenère (Kasiski/Friedman + key refinement) | 5% | 60% | 100% | 100% |
+| Beaufort (reciprocal Vigenère) | 5% | 65% | 100% | 100% |
+| Columnar (column-order hill climb) | 55% | 70% | 75% | 85% |
+| Rail fence (rail brute force) | 50% | 100% | 100% | 100% |
+| Substitution (greedy n-gram descent) | — | — | 60% | 95% |
 
-Reproduce with `python scripts/benchmark_solvers.py`. The short-text
-fall-off is the physics of the problem, not a bug: 40 letters split across a
-Vigenère key leaves too few letters per column for statistics to grip — a
-lesson the exhibit is happy to teach.
+Reproduce with `python scripts/benchmark_solvers.py`. Vigenère and Beaufort
+are measured with keys **not** in the built-in keyword dictionary, so these
+are the statistical attack's true rates — a common keyword cracks short texts
+the dictionary pass covers separately. The short-text fall-off is the physics
+of the problem, not a bug: 40 letters split across a Vigenère key leaves too
+few letters per column for statistics to grip — a lesson the exhibit is happy
+to teach. A `--assert-gate` mode runs these as a CI regression guard.
+
+### Confidence calibration
+
+The heuristic's raw confidences were badly miscalibrated: a raw 26% meant ~4%
+real accuracy and a raw 86% meant ~97%. An isotonic map (fit on the validation
+split by `scripts/calibrate_confidence.py`, applied inside `heuristic_classify`)
+corrects this, cutting expected calibration error from **0.18 to 0.04** on the
+held-out test split (map fit on validation, measured on test — a genuine
+out-of-sample number), so a reported N% means the classifier is right about N%
+of the time. Regenerate with:
+
+```bash
+python scripts/calibrate_confidence.py --data data/splits/val.jsonl
+```
 
 ---
 
@@ -225,9 +244,13 @@ See [`data/cipher_examples.jsonl`](data/cipher_examples.jsonl) for the full labe
 
 ## 🛣️ Roadmap
 
-- [ ] Publish `classical-cipher-corpus` dataset (50k rows).
-- [ ] Train and publish `cipher-detective-classifier`.
-- [ ] Add `screenshots/` images.
+- [ ] Publish `classical-cipher-corpus` dataset — one command: `python scripts/upload_to_hub.py dataset --repo …`.
+- [ ] Train and publish `cipher-detective-classifier` — needs a GPU Space; use `--char-level --family-labels`.
+- [ ] Add `screenshots/` images (needs a running Gradio runtime to capture).
+- [x] Confidence calibration: isotonic map so reported confidence matches real accuracy.
+- [x] Beaufort and columnar auto-solvers + Vigenère keyword-dictionary pass.
+- [x] Property-based round-trip tests for all cipher encoders.
+- [x] CI: Windows runner + solver-regression gate.
 - [x] Cipher-family layer: family-level accuracy reporting + `label_family()` mapping.
 - [x] Hill-climbing solver demo for monoalphabetic substitution (educational only).
 - [x] Per-length and per-difficulty evaluation buckets.
@@ -236,7 +259,7 @@ See [`data/cipher_examples.jsonl`](data/cipher_examples.jsonl) for the full labe
 - [x] Beaufort cipher support (encrypt + decrypt).
 - [x] Bigram + trigram blended scoring for hill climber.
 - [x] GitHub Actions → Hugging Face Space auto-sync on every push.
-- [ ] Calibration plot (heuristic confidence vs accuracy).
+- [x] Confidence calibration (heuristic confidence vs measured accuracy).
 - [ ] Multilingual plaintext sources (clearly labeled).
 - [ ] Linked exhibit pages from Cipher Museum / Crypto Lab.
 
