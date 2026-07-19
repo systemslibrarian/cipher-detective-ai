@@ -47,8 +47,20 @@ It is built as a Hugging Face-native triple:
 ## ✨ Demo
 
 > Open the live Space to try it: <https://huggingface.co/spaces/systemslibrarian/cipher-detective-ai>
-> Static screenshots live in [`screenshots/`](screenshots/) once captured (the
-> README intentionally avoids broken `<img>` tags before they exist).
+
+**Detect Mode** — paste ciphertext, get a classification, cipher family,
+calibrated confidence, and a full evidence report:
+
+![Detect Mode](screenshots/01-detect-mode.png)
+
+More views in [`screenshots/`](screenshots/): Try Decode, Solve Substitution,
+Compare Mode, Challenge Mode, and About. Regenerate them with the app running:
+
+```bash
+python app.py &                              # serves on :7860
+python -m playwright install chromium
+python scripts/capture_screenshots.py        # writes screenshots/*.png
+```
 
 ---
 
