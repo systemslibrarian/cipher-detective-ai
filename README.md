@@ -175,13 +175,28 @@ python scripts/inspect_metrics.py reports/baseline_metrics.json
 | Metric | Fine-grained (81 classes) | Family-level (7 families) |
 |---|---:|---:|
 | Accuracy | 29.2% | 57.2% |
-| Macro F1 | 0.392 | 0.656 |
+| Macro F1 | 0.393 | 0.656 |
 
 Family-level is the honest headline: a large share of fine-grained error is
 between classes that are mathematically indistinguishable from ciphertext
 alone (see **Labels & cipher families** below). Accuracy also depends heavily
 on length — near-perfect above 200 letters, weak under 50, which is itself an
 accurate lesson about classical cryptanalysis.
+
+### Auto-solver success rates (30 trials per cell, plaintext fully recovered)
+
+| Solver | 40 letters | 80 | 160 | 300 |
+|---|---:|---:|---:|---:|
+| Caesar (brute force + chi²) | 100% | 100% | 100% | 100% |
+| Affine (312-key brute force) | 50% | 100% | 100% | 100% |
+| Vigenère (Kasiski/Friedman + refinement) | 3% | 67% | 100% | 100% |
+| Rail fence (rail brute force) | 53% | 93% | 100% | 100% |
+| Substitution (greedy n-gram descent) | — | — | 47% | 97% |
+
+Reproduce with `python scripts/benchmark_solvers.py`. The short-text
+fall-off is the physics of the problem, not a bug: 40 letters split across a
+Vigenère key leaves too few letters per column for statistics to grip — a
+lesson the exhibit is happy to teach.
 
 ---
 

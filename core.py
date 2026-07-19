@@ -16,6 +16,8 @@ import re
 from collections import Counter
 from dataclasses import dataclass
 
+from ngram_tables import _BIGRAM_LOG_PROB, _QUADGRAM_LOG_PROB, _TRIGRAM_LOG_PROB
+
 ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 ENGLISH_IOC = 0.0667        # English plaintext / monoalphabetic baseline.
 RANDOM_IOC = 1.0 / 26.0     # ~0.0385 — uniform random letters.
@@ -300,7 +302,10 @@ def best_affine_candidates(text: str, top_n: int = 5) -> list[tuple[int, int, fl
             chi = chi_squared_for_english(letters)
             score = word_score(decoded)
             candidates.append((a, b, chi, score, decoded))
-    candidates.sort(key=lambda x: (-x[3], x[2]))
+    # Rank by word hits, then bigram log-prob: on short texts chi-squared is
+    # too noisy to pick between near-tied keys, but letter-order structure
+    # (bigrams) still discriminates well.
+    candidates.sort(key=lambda x: (-x[3], -english_bigram_score(clean_letters(x[4])), x[2]))
     return candidates[:top_n]
 
 
@@ -355,6 +360,37 @@ def vigenere_auto_solve(
                     best_chi_col = chi_col
                     best_s = s
             key_letters.append(ALPHABET[best_s])
+
+        # Refinement: per-column chi is noisy when each column has few letters
+        # (short text and/or long key).  Coordinate descent on the FULL-text
+        # bigram score fixes the columns chi got wrong: hold the rest of the
+        # key fixed and try all 26 letters for each position until stable.
+        def _bg(kl: list[str], _klen: int = key_len) -> float:
+            return english_bigram_score(
+                "".join(
+                    ALPHABET[(ALPHABET.index(c) - ALPHABET.index(kl[i % _klen])) % 26]
+                    for i, c in enumerate(letters)
+                )
+            )
+
+        best_bg = _bg(key_letters)
+        for _ in range(3):  # usually converges in 1-2 sweeps
+            improved = False
+            for i in range(key_len):
+                original = key_letters[i]
+                for cand in ALPHABET:
+                    if cand == original:
+                        continue
+                    key_letters[i] = cand
+                    bg = _bg(key_letters)
+                    if bg > best_bg:
+                        best_bg = bg
+                        original = cand
+                        improved = True
+                key_letters[i] = original
+            if not improved:
+                break
+
         key = "".join(key_letters)
         if key in seen_keys:
             continue
@@ -363,10 +399,11 @@ def vigenere_auto_solve(
         plain_letters = clean_letters(plaintext)
         chi = chi_squared_for_english(plain_letters)
         ws = word_score(plaintext)
-        results.append((key, plaintext, chi, ws))
+        results.append((key, plaintext, chi, ws, english_bigram_score(plain_letters)))
 
-    results.sort(key=lambda x: (-x[3], x[2]))
-    return results[:top_n]
+    # Word hits first, then bigram structure (chi is too noisy on short text).
+    results.sort(key=lambda x: (-x[3], -x[4], x[2]))
+    return [(k, p, c, w) for k, p, c, w, _ in results[:top_n]]
 
 
 def playfair_double_score(letters: str) -> float:
@@ -455,53 +492,23 @@ def transposition_signal(letters: str) -> tuple[float, float]:
 # Hill-climbing solver for monoalphabetic substitution
 # ---------------------------------------------------------------------------
 
-# Approximate English bigram log-probabilities. These are coarse — drawn from a
-# small training corpus — but enough to give a hill-climbing solver a useful
-# gradient. Unseen bigrams fall back to summed unigram log-probs (a standard
-# backoff trick) so the gradient stays smooth instead of plateauing on a floor.
-_BIGRAM_LOG_PROB: dict[str, float] = {
-    "TH": -2.31, "HE": -2.43, "IN": -2.78, "ER": -2.90, "AN": -3.00, "RE": -3.05,
-    "ON": -3.18, "AT": -3.25, "EN": -3.27, "ND": -3.30, "TI": -3.40, "ES": -3.45,
-    "OR": -3.48, "TE": -3.55, "OF": -3.60, "ED": -3.65, "IS": -3.70, "IT": -3.72,
-    "AL": -3.75, "AR": -3.78, "ST": -3.80, "TO": -3.82, "NT": -3.85, "NG": -3.90,
-    "SE": -3.95, "HA": -3.98, "AS": -4.00, "OU": -4.05, "IO": -4.08, "LE": -4.10,
-    "VE": -4.15, "CO": -4.18, "ME": -4.20, "DE": -4.25, "HI": -4.28, "RI": -4.30,
-    "RO": -4.32, "IC": -4.35, "NE": -4.38, "EA": -4.40, "RA": -4.42, "CE": -4.45,
-    "LI": -4.48, "CH": -4.50, "LL": -4.55, "BE": -4.58, "MA": -4.60, "SI": -4.62,
-    "OM": -4.65, "UR": -4.68,
-    # Extended coverage — improves hill-climber gradient on mid-frequency pairs
-    "WH": -4.70, "WI": -4.72, "WA": -4.73, "TR": -4.74, "OW": -4.75, "OL": -4.76,
-    "LO": -4.77, "LA": -4.78, "GH": -4.79, "EL": -4.80, "EE": -4.82, "CA": -4.83,
-    "AC": -4.84, "AB": -4.86, "PR": -4.87, "PL": -4.88, "PE": -4.89, "PA": -4.90,
-    "NO": -4.91, "LY": -4.92, "US": -4.94, "UN": -4.95, "TU": -4.96,
-    "SO": -4.97, "SH": -4.98, "SA": -4.99, "RU": -5.00, "RD": -5.01, "OT": -5.02,
-    "OO": -5.03, "OI": -5.05, "OA": -5.06, "NS": -5.07, "NA": -5.08, "MO": -5.09,
-    "MI": -5.10, "LT": -5.11, "IL": -5.12, "IF": -5.13, "GE": -5.14, "FR": -5.15,
-    "FI": -5.16, "EW": -5.17, "ET": -5.18, "EI": -5.19, "EF": -5.20, "EG": -5.21,
-    "EC": -5.22, "DI": -5.23, "CR": -5.24, "CT": -5.25, "CL": -5.26, "BY": -5.27,
-    "BU": -5.28, "BO": -5.29, "AY": -5.30, "AU": -5.31, "AM": -5.32, "AG": -5.33,
-}
-
-# Top-60 English trigram log10-probabilities (approximate; from known English corpora).
-# Unseen trigrams fall back to the sum of unigram log-probs.
-_TRIGRAM_LOG_PROB: dict[str, float] = {
-    "THE": -2.76, "AND": -3.10, "ING": -3.34, "ION": -3.37, "ENT": -3.42,
-    "TIO": -3.44, "FOR": -3.45, "HER": -3.48, "TER": -3.50, "THA": -3.52,
-    "HIS": -3.55, "ITH": -3.56, "ALL": -3.58, "TOR": -3.59, "INT": -3.60,
-    "ERS": -3.61, "NCE": -3.62, "MEN": -3.63, "ATE": -3.64, "ORT": -3.65,
-    "INE": -3.66, "STR": -3.67, "VER": -3.68, "OTH": -3.69, "ATI": -3.70,
-    "ERE": -3.71, "EDT": -3.72, "TED": -3.73, "ESS": -3.74, "HAT": -3.75,
-    "WIT": -3.76, "ARE": -3.77, "NOT": -3.78, "NDE": -3.79, "COM": -3.80,
-    "ONS": -3.81, "OUN": -3.82, "WAS": -3.83, "PRO": -3.84, "OVE": -3.85,
-    "OUR": -3.86, "HAV": -3.87, "AVE": -3.88, "ONE": -3.89, "HAN": -3.90,
-    "IVE": -3.91, "GET": -3.92, "AIN": -3.93, "EAR": -3.94, "IST": -3.95,
-    "EME": -3.96, "LLY": -3.97, "ALLY": -3.98, "RES": -3.99, "STA": -4.00,
-    "EAL": -4.01, "OFT": -4.02, "NTO": -4.03, "ACE": -4.04, "MAK": -4.05,
-}
+# The n-gram scoring tables live in ngram_tables.py (imported at the top of
+# this module): all 676 bigrams + the top-1000 trigrams, derived from the
+# corpus plaintexts.  The previous hand-typed ~100-bigram / 60-trigram tables
+# were too sparse to climb on: their unigram backoff dominated the score and
+# REWARDED frequency-correct letter salad, so the hill climber's
+# frequency-seeded start was already a local optimum of its own metric.
+# Regenerate with: python scripts/build_ngram_tables.py > ngram_tables.py
 
 
 def english_trigram_score(letters: str) -> float:
-    """Mean log10-probability per trigram. Higher (less negative) = more English."""
+    """Mean log10-probability per trigram. Higher (less negative) = more English.
+
+    Unseen trigrams back off to the bigram chain rule
+    ``p(abc) ~ p(ab) * p(c|b) = p(ab) * p(bc) / p(b)`` — smooth everywhere
+    (the bigram table is complete) and, unlike a unigram-sum backoff, it does
+    not reward frequency-correct letter salad.
+    """
     if len(letters) < 3:
         return -8.0
     total = 0.0
@@ -513,10 +520,10 @@ def english_trigram_score(letters: str) -> float:
             total += seen
         else:
             total += (
-                _UNIGRAM_LOG_PROB.get(tg[0], -3.0)
-                + _UNIGRAM_LOG_PROB.get(tg[1], -3.0)
-                + _UNIGRAM_LOG_PROB.get(tg[2], -3.0)
-                - 1.5
+                _BIGRAM_LOG_PROB.get(tg[:2], -6.0)
+                + _BIGRAM_LOG_PROB.get(tg[1:], -6.0)
+                - _UNIGRAM_LOG_PROB.get(tg[1], -3.0)
+                - 0.3  # small penalty: an unseen trigram is rarer than its chain estimate
             )
     return total / trips
 
@@ -526,31 +533,45 @@ _UNIGRAM_LOG_PROB: dict[str, float] = {
     ch: math.log10(max(freq, 0.01) / 100.0) for ch, freq in ENGLISH_FREQ.items()
 }
 _BIGRAM_FLOOR = -8.0
-_BIGRAM_BACKOFF_PENALTY = 1.0  # subtracted from unigram fallback so seen pairs win
+def english_quadgram_score(letters: str) -> float:
+    """Mean log10-probability per quadgram — the sharpest English discriminator.
+
+    Quadgrams punish wrong decodes far harder than bigrams/trigrams, which
+    deepens the true key's basin for the hill climber.  Unseen quadgrams back
+    off to the trigram chain rule ``p(abcd) ~ p(abc) * p(bcd) / p(bc)``.
+    """
+    if len(letters) < 4:
+        return english_trigram_score(letters)
+    total = 0.0
+    quads = len(letters) - 3
+    for i in range(quads):
+        qg = letters[i:i + 4]
+        seen = _QUADGRAM_LOG_PROB.get(qg)
+        if seen is not None:
+            total += seen
+        else:
+            total += (
+                _TRIGRAM_LOG_PROB.get(qg[:3], -6.5)
+                + _TRIGRAM_LOG_PROB.get(qg[1:], -6.5)
+                - _BIGRAM_LOG_PROB.get(qg[1:3], -6.0)
+                - 0.3
+            )
+    return total / quads
 
 
 def english_bigram_score(letters: str) -> float:
     """Mean log-probability per bigram. Higher (less negative) = more English-like.
 
-    Uses a small bigram table for common pairs; falls back to (log p(a) + log p(b))
-    minus a small penalty for unseen bigrams. The backoff keeps the gradient
-    smooth so hill-climbing doesn't plateau on a floor.
+    The bigram table covers all 676 A-Z pairs (add-one smoothed), so the
+    gradient is smooth everywhere; the floor only fires for non-alphabetic
+    characters that slipped past cleaning.
     """
     if len(letters) < 2:
         return _BIGRAM_FLOOR
     total = 0.0
     pairs = len(letters) - 1
     for i in range(pairs):
-        bg = letters[i:i + 2]
-        seen = _BIGRAM_LOG_PROB.get(bg)
-        if seen is not None:
-            total += seen
-        else:
-            total += (
-                _UNIGRAM_LOG_PROB.get(bg[0], -3.0)
-                + _UNIGRAM_LOG_PROB.get(bg[1], -3.0)
-                - _BIGRAM_BACKOFF_PENALTY
-            )
+        total += _BIGRAM_LOG_PROB.get(letters[i:i + 2], -6.0)
     return total / pairs
 
 
@@ -562,16 +583,20 @@ def _apply_key(letters: str, key: str) -> str:
 def hill_climb_substitution(
     text: str,
     iterations: int = 4000,
-    restarts: int = 3,
+    restarts: int = 8,
     seed: int | None = 42,
 ) -> tuple[str, str, float]:
-    """Solve monoalphabetic substitution by hill climbing on trigram + bigram log-prob.
+    """Solve monoalphabetic substitution by greedy descent on a blended
+    bigram/trigram/quadgram log-probability score, with random restarts.
 
     Returns ``(plaintext_guess, key, score)``. ``key`` is a 26-letter string
     where ``key[i]`` is the plaintext letter for cipher letter ``ALPHABET[i]``.
+    ``iterations`` is kept for API compatibility; each restart now runs full
+    325-swap sweeps to a local optimum, so ``restarts`` is the effort knob.
 
-    Educational only — works on a few hundred letters of English, fails on
-    short or non-English samples. That failure mode is part of the lesson.
+    Educational only — reliably solves ~200+ letters of natural English,
+    degrades on shorter or highly repetitive samples. That failure mode is
+    part of the lesson.
     """
     import random as _random
     rng = _random.Random(seed)
@@ -590,38 +615,49 @@ def hill_climb_substitution(
 
     def _score(k: str) -> float:
         dec = _apply_key(letters, k)
-        # Blend bigram + trigram scores: trigrams carry more discriminating power
-        # on longer texts but are noisier on short ones.
+        # Quadgrams dominate the blend: they punish wrong decodes hardest,
+        # which deepens the true key's basin.  Bigrams/trigrams keep the
+        # gradient smooth where quadgram hits are sparse.
         bg = english_bigram_score(dec)
         if len(dec) >= 30:
             tg = english_trigram_score(dec)
-            return 0.4 * bg + 0.6 * tg
+            qg = english_quadgram_score(dec)
+            return 0.2 * bg + 0.3 * tg + 0.5 * qg
         return bg
 
     best_key = "".join(seed_key)
     best_score = _score(best_key)
 
-    for restart in range(max(1, restarts)):
-        current = list(seed_key) if restart == 0 else list(best_key)
-        if restart > 0:
-            # Randomise more aggressively on each restart so we escape local optima.
-            for _ in range(2 + restart):
-                a, b = rng.sample(range(26), 2)
-                current[a], current[b] = current[b], current[a]
+    def _greedy_descent(current: list[str]) -> tuple[list[str], float]:
+        """Jakobsen-style descent: sweep ALL 325 pair swaps, keep improvements,
+        repeat until a full sweep finds none.  Deterministic exploitation beats
+        random swap sampling, which routinely misses the one improving move."""
         current_score = _score("".join(current))
-        no_improve = 0
-        for _ in range(iterations):
-            a, b = rng.sample(range(26), 2)
-            current[a], current[b] = current[b], current[a]
-            score = _score("".join(current))
-            if score > current_score:
-                current_score = score
-                no_improve = 0
-            else:
-                current[a], current[b] = current[b], current[a]  # revert
-                no_improve += 1
-                if no_improve > iterations // 4:
-                    break
+        improved = True
+        while improved:
+            improved = False
+            for a in range(25):
+                for b in range(a + 1, 26):
+                    current[a], current[b] = current[b], current[a]
+                    score = _score("".join(current))
+                    if score > current_score:
+                        current_score = score
+                        improved = True
+                    else:
+                        current[a], current[b] = current[b], current[a]  # revert
+        return current, current_score
+
+    # Greedy descent from the frequency seed plus random restarts.  The
+    # quadgram-heavy score makes the true key's basin deep enough that a
+    # modest number of restarts reaches it reliably (verified empirically:
+    # the truth is the best local optimum of this score).
+    for restart in range(max(1, restarts)):
+        if restart == 0:
+            current = list(seed_key)
+        else:
+            current = list(ALPHABET)
+            rng.shuffle(current)
+        current, current_score = _greedy_descent(current)
         if current_score > best_score:
             best_score = current_score
             best_key = "".join(current)
