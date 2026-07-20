@@ -76,6 +76,11 @@ try:
         if max(_tok("probe test", truncation=True, max_length=8)["input_ids"]) >= _vocab:
             _base = _BASE_TOKENIZERS.get(_model.config.model_type, "distilbert-base-uncased")
             _tok = AutoTokenizer.from_pretrained(_base)
+        # DistilBERT / RoBERTa forward() don't accept token_type_ids, but a BERT
+        # tokenizer emits them and the pipeline forwards them straight into the
+        # model -> TypeError. Drop that input for models that don't use it.
+        if _model.config.model_type in ("distilbert", "roberta"):
+            _tok.model_input_names = [n for n in _tok.model_input_names if n != "token_type_ids"]
         MODEL = pipeline("text-classification", model=_model, tokenizer=_tok, top_k=None)
         # A char-level model was trained on space-separated characters; we must
         # feed it the same way at inference (flag saved in the model config).
@@ -305,8 +310,6 @@ def detective_mode(ciphertext: str) -> tuple[str, str]:
         return "Paste a classical ciphertext sample to begin.", ""
     pred = combined_prediction(ciphertext)
     explanation = build_explanation(ciphertext, pred)
-    if pred.source == "heuristic" and TRANSFORMER_LAST_ERROR:
-        explanation += f"\n\n<!-- diag: transformer fell back: {TRANSFORMER_LAST_ERROR} -->"
     all_scores = sorted(pred.scores.items(), key=lambda kv: kv[1], reverse=True)
     top_scores = all_scores[:10]
     score_lines = ["| Label | Score |", "|---|---:|"]
