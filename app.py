@@ -51,6 +51,7 @@ MODEL = None
 MODEL_LABELS = None
 MODEL_ERROR = None
 MODEL_CHAR_LEVEL = False
+TRANSFORMER_LAST_ERROR = None
 
 _BASE_TOKENIZERS = {
     "distilbert": "distilbert-base-uncased",
@@ -286,7 +287,9 @@ def transformer_predict(text: str) -> ModelPrediction | None:
             return None
         label = max(scores, key=scores.get)
         return ModelPrediction(label=label, confidence=scores[label], scores=scores, source="transformer")
-    except Exception:
+    except Exception as exc:
+        global TRANSFORMER_LAST_ERROR
+        TRANSFORMER_LAST_ERROR = f"{type(exc).__name__}: {exc}"
         return None
 
 
@@ -302,6 +305,8 @@ def detective_mode(ciphertext: str) -> tuple[str, str]:
         return "Paste a classical ciphertext sample to begin.", ""
     pred = combined_prediction(ciphertext)
     explanation = build_explanation(ciphertext, pred)
+    if pred.source == "heuristic" and TRANSFORMER_LAST_ERROR:
+        explanation += f"\n\n<!-- diag: transformer fell back: {TRANSFORMER_LAST_ERROR} -->"
     all_scores = sorted(pred.scores.items(), key=lambda kv: kv[1], reverse=True)
     top_scores = all_scores[:10]
     score_lines = ["| Label | Score |", "|---|---:|"]
