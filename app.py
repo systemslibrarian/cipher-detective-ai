@@ -52,15 +52,33 @@ MODEL_LABELS = None
 MODEL_ERROR = None
 MODEL_CHAR_LEVEL = False
 
+_BASE_TOKENIZERS = {
+    "distilbert": "distilbert-base-uncased",
+    "bert": "bert-base-uncased",
+    "roberta": "roberta-base",
+}
+
 try:
-    from transformers import pipeline
+    from transformers import AutoModelForSequenceClassification, AutoTokenizer, pipeline
 
     model_id = os.getenv("CIPHER_MODEL_ID", "cipher_model")
     if os.path.isdir(model_id) or "/" in model_id:
-        MODEL = pipeline("text-classification", model=model_id, tokenizer=model_id, top_k=None)
+        _model = AutoModelForSequenceClassification.from_pretrained(model_id)
+        _tok = AutoTokenizer.from_pretrained(model_id)
+        # Robustness: a mismatched/stale tokenizer (e.g. one carrying RoBERTa
+        # special tokens on a BERT model) can emit token ids beyond the model's
+        # embedding table, which crashes inference with an IndexError. Probe it,
+        # and if it overflows, fall back to the clean base tokenizer for this
+        # model type — so the classifier works regardless of the repo's or the
+        # Space cache's tokenizer state.
+        _vocab = _model.get_input_embeddings().weight.shape[0]
+        if max(_tok("probe test", truncation=True, max_length=8)["input_ids"]) >= _vocab:
+            _base = _BASE_TOKENIZERS.get(_model.config.model_type, "distilbert-base-uncased")
+            _tok = AutoTokenizer.from_pretrained(_base)
+        MODEL = pipeline("text-classification", model=_model, tokenizer=_tok, top_k=None)
         # A char-level model was trained on space-separated characters; we must
         # feed it the same way at inference (flag saved in the model config).
-        MODEL_CHAR_LEVEL = bool(getattr(MODEL.model.config, "char_level", False))
+        MODEL_CHAR_LEVEL = bool(getattr(_model.config, "char_level", False))
 except Exception as exc:  # The heuristic path is intentionally always available.
     MODEL_ERROR = str(exc)
     MODEL = None
