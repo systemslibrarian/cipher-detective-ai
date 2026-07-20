@@ -134,26 +134,57 @@ Each row includes `id`, `text`, `ciphertext`, `plaintext`, `label`, `cipher`, `k
 
 ## 🧠 Train the model
 
+### Easiest: free Colab GPU, zero cost
+
+Open [`notebooks/train_on_colab.ipynb`](notebooks/train_on_colab.ipynb) in
+[Google Colab](https://colab.research.google.com/), switch the runtime to the
+free **T4 GPU**, paste a free Hugging Face **Write** token when the login cell
+asks, and run the cells. It trains the character-level classifier and pushes it
+to the Hub — **no paid GPU Space required**. A full run takes ~30–60 minutes.
+
+### Or from the command line
+
 ```bash
 python scripts/train_transformer.py \
-  --data data/cipher_examples.jsonl \
+  --data data/splits/train.jsonl \
+  --test-data data/splits/val.jsonl \
   --model distilbert-base-uncased \
+  --char-level \
   --out cipher_model \
-  --epochs 3
+  --epochs 5
 ```
 
-Outputs land in `cipher_model/`:
+Key flags:
 
-- model + tokenizer
-- `training_metrics.json` (accuracy, macro precision/recall/F1)
-- `label_mapping.json` (`label2id` / `id2label`)
+- `--char-level` — **tokenize one character at a time.** Ciphertext has no word
+  structure for WordPiece/BPE subwords to exploit (`QK` and `QUICK` share
+  nothing), so character granularity is the right inductive bias. The flag is
+  saved into the model's `config.json`, and the Space applies the *same* spacing
+  at inference automatically — so the model behaves identically in production and
+  training (no train/serve skew).
+- `--family-labels` — train the 7-way [cipher-family](#-labels--cipher-families)
+  classifier instead of the 81 fine labels. Higher accuracy, but the Space's
+  Compare Mode expects the 81-class labels, so it's for experiments.
 
-To upload to the Hub afterwards:
+Outputs land in `cipher_model/`: model + tokenizer, `training_metrics.json`
+(accuracy, macro precision/recall/F1), and `label_mapping.json`. Upload with
+`huggingface-cli upload systemslibrarian/cipher-detective-classifier ./cipher_model`.
 
-```bash
-huggingface-cli login
-huggingface-cli upload systemslibrarian/cipher-detective-classifier ./cipher_model
+### How the Space loads your model
+
+The live Space reads one environment variable, `CIPHER_MODEL_ID` (its own
+convention — see `os.getenv("CIPHER_MODEL_ID")` in [`app.py`](app.py)). Set it
+under **Space → Settings → Variables and secrets**:
+
+```text
+CIPHER_MODEL_ID = systemslibrarian/cipher-detective-classifier
 ```
+
+Restart the Space; the **About / Model Status** tab confirms it loaded. If the
+model can't load for any reason, the app **always** falls back to the
+transparent heuristic — by design. Setting `CIPHER_MODEL_ID` is the *only* step
+needed to go live; no GitHub secrets are involved (the `HF_TOKEN` GitHub secret
+is unrelated — it only powers the code auto-sync workflow).
 
 ---
 
@@ -254,11 +285,48 @@ See [`data/cipher_examples.jsonl`](data/cipher_examples.jsonl) for the full labe
 
 ---
 
+## 🔧 How it fits together (and how it was hardened)
+
+The three Hugging Face artifacts connect like this:
+
+```
+notebooks/train_on_colab.ipynb  ──trains──▶  Model (Hub)
+   (free Colab GPU)                              │
+                                                 │ CIPHER_MODEL_ID
+data/  ──scripts/generate_dataset.py──▶ Dataset  ▼
+                                              Space (app.py)
+                                       loads the model if the
+                                       env var is set, else
+                                       falls back to the heuristic
+```
+
+Recent work took the project from "plausible-looking" to measured and honest —
+see [`CHANGELOG.md`](CHANGELOG.md) for the full list. Highlights:
+
+- **Real bugs fixed:** a broken `columnar_transposition_decrypt`, an invalid
+  Porta table (not a permutation), and a Windows `cp1252` console crash — the
+  last two now guarded by property-based tests (`tests/test_properties.py`).
+- **Honest metrics:** family-level accuracy is reported as the headline because
+  many fine labels are statistically indistinguishable; confidence is
+  **calibrated** (`calibrate_confidence()`), cutting expected calibration error
+  from 0.18 to 0.04 out-of-sample so a reported N% means right ~N% of the time.
+- **Solvers that actually work:** the substitution solver (previously 0%) now
+  recovers ~97% of 300-letter texts via a full n-gram model + greedy descent;
+  Beaufort and columnar auto-solvers and a Vigenère keyword pass were added.
+  `scripts/benchmark_solvers.py` measures them and gates CI against regressions.
+- **Char-level model, wired end-to-end:** ciphertext is tokenized one character
+  at a time; the `char_level` flag rides in the model config so the Space feeds
+  the model the same way it was trained. On a free Colab GPU this beats the
+  heuristic by ~19 accuracy points on the 81-class task.
+- **CI hardened:** Linux + Windows runners and a solver-regression gate.
+
+---
+
 ## 🛣️ Roadmap
 
-- [ ] Publish `classical-cipher-corpus` dataset — one command: `python scripts/upload_to_hub.py dataset --repo …`.
-- [ ] Train and publish `cipher-detective-classifier` — needs a GPU Space; use `--char-level --family-labels`.
-- [ ] Add `screenshots/` images (needs a running Gradio runtime to capture).
+- [x] Publish `classical-cipher-corpus` dataset — one command: `python scripts/upload_to_hub.py dataset --repo …`.
+- [x] Train and publish `cipher-detective-classifier` — free Colab GPU via [`notebooks/train_on_colab.ipynb`](notebooks/train_on_colab.ipynb).
+- [x] Add `screenshots/` images (captured from the live app with `scripts/capture_screenshots.py`).
 - [x] Confidence calibration: isotonic map so reported confidence matches real accuracy.
 - [x] Beaufort and columnar auto-solvers + Vigenère keyword-dictionary pass.
 - [x] Property-based round-trip tests for all cipher encoders.
