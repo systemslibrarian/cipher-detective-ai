@@ -30,6 +30,7 @@ from core import (
     build_explanation,
     caesar_encrypt,
     caesar_shift,
+    char_tokenize_text,
     chi_squared_for_english,
     clean_letters,
     columnar_auto_solve,
@@ -49,6 +50,7 @@ from core import (
 MODEL = None
 MODEL_LABELS = None
 MODEL_ERROR = None
+MODEL_CHAR_LEVEL = False
 
 try:
     from transformers import pipeline
@@ -56,6 +58,9 @@ try:
     model_id = os.getenv("CIPHER_MODEL_ID", "cipher_model")
     if os.path.isdir(model_id) or "/" in model_id:
         MODEL = pipeline("text-classification", model=model_id, tokenizer=model_id, top_k=None)
+        # A char-level model was trained on space-separated characters; we must
+        # feed it the same way at inference (flag saved in the model config).
+        MODEL_CHAR_LEVEL = bool(getattr(MODEL.model.config, "char_level", False))
 except Exception as exc:  # The heuristic path is intentionally always available.
     MODEL_ERROR = str(exc)
     MODEL = None
@@ -244,7 +249,8 @@ def transformer_predict(text: str) -> ModelPrediction | None:
     if MODEL is None:
         return None
     try:
-        result = MODEL(text[:512])
+        model_input = char_tokenize_text(text) if MODEL_CHAR_LEVEL else text
+        result = MODEL(model_input[:512])
         if isinstance(result, list) and result and isinstance(result[0], list):
             result = result[0]
         scores: dict[str, float] = {}

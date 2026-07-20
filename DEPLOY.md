@@ -67,12 +67,25 @@ hf upload systemslibrarian/classical-cipher-corpus \
 
 ## 4. Train and publish the model
 
+### Easiest: free Colab GPU (no billing)
+
+Open [`notebooks/train_on_colab.ipynb`](notebooks/train_on_colab.ipynb) in
+[Google Colab](https://colab.research.google.com/), switch the runtime to the
+free **T4 GPU**, paste a free Hugging Face **Write** token when asked, and run
+the cells top to bottom. It trains the character-level classifier and pushes it
+to the Hub — no paid GPU Space required. The notebook also uploads the model,
+so you can skip straight to step 5.
+
+### Or locally / on your own GPU
+
 ```bash
 python scripts/train_transformer.py \
-  --data data/cipher_examples.jsonl \
+  --data data/splits/train.jsonl \
+  --test-data data/splits/val.jsonl \
   --model distilbert-base-uncased \
+  --char-level \
   --out cipher_model \
-  --epochs 3
+  --epochs 5
 
 # `cipher_model/` now contains the model, tokenizer,
 # `training_metrics.json`, and `label_mapping.json`.
@@ -81,6 +94,11 @@ hf upload systemslibrarian/cipher-detective-classifier ./cipher_model
 hf upload systemslibrarian/cipher-detective-classifier \
     hf_cards/model_README.md README.md
 ```
+
+`--char-level` tokenizes one character at a time — the right fit for ciphertext.
+The flag is saved in the model config, and the app applies the same spacing at
+inference automatically, so the model behaves identically in production and
+training. On CPU a full run is slow; use Colab or a GPU box.
 
 Optionally re-evaluate against the dataset for a published metrics snapshot:
 

@@ -21,17 +21,7 @@ from transformers import (
 )
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from core import CIPHER_FAMILIES  # noqa: E402
-
-
-def char_tokenize_text(text: str) -> str:
-    """Space out every character so a subword tokenizer emits one token per
-    character.  Ciphertext has no word structure for WordPiece/BPE to exploit —
-    ``QK`` and ``QUICK`` share no meaningful subwords — so character granularity
-    is the right inductive bias.  Real spaces become ``_`` so word boundaries
-    (a signal for some ciphers) survive.
-    """
-    return " ".join(ch if ch != " " else "_" for ch in text.strip())
+from core import CIPHER_FAMILIES, char_tokenize_text  # noqa: E402
 
 
 def load_jsonl(path):
@@ -232,6 +222,11 @@ def main():
         id2label=id2label,
         label2id=label2id,
     )
+    # Record the char-level flag in the model config so it is serialized to
+    # config.json and travels to the Hub. The app / evaluator read it back and
+    # apply the SAME char spacing at inference — without this, a char-level
+    # model gets raw text in production and predicts garbage (train/serve skew).
+    model.config.char_level = bool(args.char_level)
 
     # Compute class weights for the weighted / focal loss trainer.
     train_label_ids = [r["label_id"] for r in train_rows]

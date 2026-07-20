@@ -10,7 +10,7 @@ from pathlib import Path
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, f1_score
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from core import heuristic_classify, label_family
+from core import char_tokenize_text, heuristic_classify, label_family
 
 
 def load_rows(path: str):
@@ -30,9 +30,11 @@ def transformer_predictions(texts, model_id: str):
     except Exception as exc:  # model can't be loaded
         print(f"[evaluate_baseline] Transformer unavailable: {exc}")
         return None
+    char_level = bool(getattr(pipe.model.config, "char_level", False))
     preds = []
     for t in texts:
-        out = pipe(t[:512])
+        model_input = char_tokenize_text(t) if char_level else t
+        out = pipe(model_input[:512])
         # `top_k=1` returns a list-of-list; flatten.
         if isinstance(out, list) and out and isinstance(out[0], list):
             out = out[0]

@@ -103,6 +103,19 @@ def clean_letters(text: str) -> str:
     return re.sub(r"[^A-Z]", "", text.upper())
 
 
+def char_tokenize_text(text: str) -> str:
+    """Space out every character so a subword tokenizer emits one token per
+    character. Ciphertext has no word structure for WordPiece/BPE to exploit,
+    so character granularity is the right inductive bias. Real spaces become
+    ``_`` so word boundaries survive.
+
+    Used BOTH at training time (``scripts/train_transformer.py --char-level``)
+    and at inference (the app / evaluator detect a char-level model from its
+    config and apply this) — they must match or predictions are garbage.
+    """
+    return " ".join(ch if ch != " " else "_" for ch in text.strip())
+
+
 def caesar_encrypt(text: str, shift: int) -> str:
     out = []
     for ch in text.upper():
