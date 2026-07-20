@@ -33,8 +33,10 @@ def transformer_predictions(texts, model_id: str):
     char_level = bool(getattr(pipe.model.config, "char_level", False))
     preds = []
     for t in texts:
-        model_input = char_tokenize_text(t) if char_level else t
-        out = pipe(model_input[:512])
+        # Cap raw characters before spacing so the char-level sequence stays
+        # under the model's 512-token limit (pipeline truncation is unreliable).
+        model_input = char_tokenize_text(t[:500]) if char_level else t[:512]
+        out = pipe(model_input, truncation=True)
         # `top_k=1` returns a list-of-list; flatten.
         if isinstance(out, list) and out and isinstance(out[0], list):
             out = out[0]

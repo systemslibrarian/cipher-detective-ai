@@ -249,8 +249,15 @@ def transformer_predict(text: str) -> ModelPrediction | None:
     if MODEL is None:
         return None
     try:
-        model_input = char_tokenize_text(text) if MODEL_CHAR_LEVEL else text
-        result = MODEL(model_input[:512])
+        # Cap RAW characters before spacing so the char-level sequence (~1
+        # token per character) stays under the model's 512-token limit. The
+        # pipeline's own truncation=True is unreliable across transformers
+        # versions, so we bound the input length ourselves.
+        if MODEL_CHAR_LEVEL:
+            model_input = char_tokenize_text(text[:500])
+        else:
+            model_input = text[:512]
+        result = MODEL(model_input, truncation=True)
         if isinstance(result, list) and result and isinstance(result[0], list):
             result = result[0]
         scores: dict[str, float] = {}
