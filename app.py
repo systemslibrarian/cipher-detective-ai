@@ -11,6 +11,7 @@ does not break modern encryption or assist unauthorized access.
 """
 from __future__ import annotations
 
+import json
 import os
 import random
 
@@ -36,8 +37,10 @@ from core import (
     columnar_auto_solve,
     columnar_transposition_decrypt,
     columnar_transposition_encrypt,
+    english_quadgram_score,
     heuristic_classify,
     hill_climb_substitution,
+    label_family,
     rail_fence_encrypt,
     shannon_entropy,
     substitution_encrypt,
@@ -58,6 +61,39 @@ _BASE_TOKENIZERS = {
     "bert": "bert-base-uncased",
     "roberta": "roberta-base",
 }
+
+
+def _load_transformer_calibration() -> list[tuple[float, float]]:
+    """Isotonic confidence->accuracy breakpoints for the model, or [] if absent
+    (see scripts/calibrate_transformer.py)."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "transformer_calibration_map.json")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return []
+    return sorted((float(k), float(v)) for k, v in
+                  data.get("fine_confidence_to_accuracy", {}).items())
+
+
+_TRANSFORMER_CAL = _load_transformer_calibration()
+
+
+def calibrate_transformer_confidence(raw: float) -> float:
+    """Map a raw model softmax score to its empirical accuracy (piecewise-linear
+    over the calibration curve). Identity if no map is present."""
+    pts = _TRANSFORMER_CAL
+    if not pts:
+        return raw
+    if raw <= pts[0][0]:
+        return pts[0][1]
+    if raw >= pts[-1][0]:
+        return pts[-1][1]
+    for (x0, y0), (x1, y1) in zip(pts, pts[1:], strict=False):
+        if x0 <= raw <= x1:
+            t = (raw - x0) / (x1 - x0) if x1 > x0 else 0.0
+            return round(y0 + t * (y1 - y0), 4)
+    return raw
 
 try:
     from transformers import AutoModelForSequenceClassification, AutoTokenizer, pipeline
@@ -291,18 +327,86 @@ def transformer_predict(text: str) -> ModelPrediction | None:
         if not scores:
             return None
         label = max(scores, key=scores.get)
-        return ModelPrediction(label=label, confidence=scores[label], scores=scores, source="transformer")
+        # Calibrate: a raw softmax score is over-confident; map it to the model's
+        # measured accuracy at that score (scripts/calibrate_transformer.py).
+        confidence = calibrate_transformer_confidence(scores[label])
+        return ModelPrediction(label=label, confidence=confidence, scores=scores, source="transformer")
     except Exception as exc:
         global TRANSFORMER_LAST_ERROR
         TRANSFORMER_LAST_ERROR = f"{type(exc).__name__}: {exc}"
         return None
 
 
+# Cipher families where the heuristic is near-perfect (format-distinct: morse,
+# polybius, tap code, digit codes, symbol ciphers). It should win there.
+_HEURISTIC_STRONG_FAMILIES = {"code_format", "plain"}
+
+
+# Quadgram log-prob per letter: real English ≈ -6.5, ciphertext ≈ -7.7 to -8.8.
+# This threshold reliably answers "did the decode recover English?" — far more
+# robust than word matching, which misses uncommon vocabulary.
+_ENGLISH_QG = -7.2
+
+
+def _looks_english(s: str) -> bool:
+    letters = clean_letters(s)
+    return len(letters) >= 20 and english_quadgram_score(letters) > _ENGLISH_QG
+
+
+def _verified_decode(text: str) -> ModelPrediction | None:
+    """If a simple attack actually BREAKS the text to clear English, we *know*
+    the cipher — a recovered plaintext beats any classifier guess. Covers the
+    brute-forceable ciphers (Caesar, ROT-13, Affine, Atbash) and auto-solvable
+    Vigenère, exactly where the statistical classifiers confuse the look-alike
+    shift ciphers. "Is it English?" is judged by quadgram score, not word lists.
+    """
+    if len(clean_letters(text)) < 25:
+        return None
+    if _looks_english(text):  # the input itself is English -> plaintext, not a cipher
+        return None
+
+    def _pred(label: str) -> ModelPrediction:
+        return ModelPrediction(label, 0.92, {label: 0.92}, "verified-decode")
+
+    # Caesar / ROT-13 — a non-zero brute-force shift recovers English.
+    cc = best_caesar_candidates(text, 1)
+    if cc and cc[0][0] != 0 and _looks_english(cc[0][3]):
+        return _pred("rot13" if cc[0][0] == 13 else "caesar")
+    # Atbash BEFORE affine (Atbash is the affine key a=25, b=25).
+    if _looks_english(atbash(text)):
+        return _pred("atbash")
+    # Affine, excluding a=1 (Caesar) and a=25 (Atbash).
+    ac = best_affine_candidates(text, 1)
+    if ac and ac[0][0] not in (1, 25) and _looks_english(ac[0][4]):
+        return _pred("affine")
+    # Vigenère — Kasiski/Friedman auto-solve recovers English with a real key.
+    vs = vigenere_auto_solve(text)
+    if vs and len(vs[0][0]) >= 2 and _looks_english(vs[0][1]):
+        return _pred("vigenere")
+    return None
+
+
 def combined_prediction(text: str) -> ModelPrediction:
+    """Ensemble the transparent heuristic and the Transformer.
+
+    1. If a simple attack actually decrypts the text to English, trust that —
+       a broken cipher is a certainty, not a guess.
+    2. The heuristic wins on format-distinct ciphers (~100%: Morse, Polybius,
+       tap code, numeric codes, pigpen…).
+    3. Otherwise take whichever predictor is more confident. Both confidences
+       are calibrated (≈ probability correct), so this is an honest comparison —
+       the model generalises better on the substitution / machine families.
+    """
+    verified = _verified_decode(text)
+    if verified is not None:
+        return verified
+    heur = heuristic_classify(text)
     ml = transformer_predict(text)
-    if ml:
-        return ml
-    return heuristic_classify(text)
+    if ml is None:
+        return heur
+    if label_family(heur.label) in _HEURISTIC_STRONG_FAMILIES and heur.confidence >= 0.60:
+        return heur
+    return heur if heur.confidence >= ml.confidence else ml
 
 
 def detective_mode(ciphertext: str) -> tuple[str, str]:

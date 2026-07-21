@@ -100,6 +100,39 @@ The flag is saved in the model config, and the app applies the same spacing at
 inference automatically, so the model behaves identically in production and
 training. On CPU a full run is slow; use Colab or a GPU box.
 
+### Improving accuracy (higher-success recipes)
+
+The baseline DistilBERT run reaches ~57% fine-grained accuracy (81 classes) and
+tends to over-predict shift ciphers (Caesar/Vigenère/Trithemius look alike at
+the character level). Two drop-in upgrades, both run on the same free Colab GPU:
+
+**Stronger model + focal loss** — bigger backbone and a loss that fights the
+class imbalance driving the shift-cipher bias:
+
+```bash
+python scripts/train_transformer.py \
+  --data data/splits/train.jsonl --test-data data/splits/val.jsonl \
+  --model roberta-base --char-level --focal-loss \
+  --epochs 10 --batch-size 32 --out cipher_model \
+  --push-to-hub --hub-model-id <you>/cipher-detective-classifier
+```
+
+**Character-native model (CANINE)** — operates directly on Unicode codepoints,
+so it sees position/periodicity without the spacing trick (drop `--char-level`;
+CANINE is char-native and the app feeds it raw text automatically):
+
+```bash
+python scripts/train_transformer.py \
+  --data data/splits/train.jsonl --test-data data/splits/val.jsonl \
+  --model google/canine-s --focal-loss \
+  --epochs 10 --max-length 512 --out cipher_model \
+  --push-to-hub --hub-model-id <you>/cipher-detective-classifier
+```
+
+After publishing a new model, run `scripts/calibrate_transformer.py` and commit
+the refreshed `transformer_calibration_map.json` so its reported confidence
+still matches its accuracy.
+
 Optionally re-evaluate against the dataset for a published metrics snapshot:
 
 ```bash

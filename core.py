@@ -1696,14 +1696,27 @@ def _heuristic_classify_raw(text: str) -> ModelPrediction:  # noqa: C901 – int
 
 
 
+def _top_candidates(pred: ModelPrediction, n: int = 3) -> str:
+    """Format the top-N labels with confidences and their families — because
+    several fine labels are statistically indistinguishable, the runner-up is
+    often just as plausible as the winner."""
+    ranked = sorted(pred.scores.items(), key=lambda kv: kv[1], reverse=True)[:n]
+    total = sum(v for _, v in ranked) or 1.0
+    parts = [f"`{lbl}` ({label_family(lbl)}, {100 * v / total:.0f}%)" for lbl, v in ranked]
+    return " · ".join(parts)
+
+
 def build_explanation(text: str, pred: ModelPrediction) -> str:
     ev = analyze_evidence(text)
+    fam = label_family(pred.label)
     lines = [
         f"### Detective conclusion: `{pred.label}`",
-        f"**Cipher family:** `{label_family(pred.label)}` — family verdicts are far more "
-        "reliable than exact labels; several ciphers are statistically identical.  ",
+        f"**Cipher family: `{fam}`** — the family verdict is far more reliable than the "
+        "exact label; several ciphers are statistically identical, so treat the fine "
+        "label as a best guess.  ",
         f"**Confidence:** {pred.confidence:.1%}  ",
-        f"**Prediction source:** {pred.source}",
+        f"**Prediction source:** {pred.source}  ",
+        f"**Top candidates:** {_top_candidates(pred)}",
         "",
         "### Evidence",
         f"- Letters analyzed: **{ev.letters}**",

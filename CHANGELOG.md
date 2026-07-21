@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Accuracy overhaul — five improvements to the live classifier:**
+  1. **Ensemble** (`combined_prediction`): a *verified-decode* pass actually
+     breaks Caesar/ROT-13/Affine/Atbash/Vigenère (judged English by quadgram
+     score, not word lists) and reports that as certain; the heuristic wins on
+     format-distinct ciphers (Morse, Polybius…); otherwise the more-confident
+     (calibrated) of heuristic/Transformer wins. 7/7 on a mixed spot-check vs
+     the model-only baseline that missed Caesar and Vigenère.
+  2. **Family + top-3 reporting**: the Detect report leads with the cipher
+     family and lists the top-3 candidate labels with confidences.
+  3. **Stronger-retrain recipe** (DEPLOY.md): `roberta-base --focal-loss
+     --epochs 10` to fight the shift-cipher class imbalance.
+  4. **Transformer confidence calibration** (`scripts/calibrate_transformer.py`
+     + `transformer_calibration_map.json`): isotonic map so the model's reported
+     confidence matches accuracy (val ECE 0.038 → 0.014; measured 61.2% acc).
+  5. **Character-native model recipe** (DEPLOY.md): `google/canine-s` for a
+     codepoint-level model, better on positional cipher patterns.
 - **Confidence calibration** (`calibrate_confidence()` + `calibration_map.json`,
   fit by `scripts/calibrate_confidence.py`): the heuristic's hand-tuned
   confidences were badly miscalibrated — a raw 26% meant ~4% real accuracy, a
